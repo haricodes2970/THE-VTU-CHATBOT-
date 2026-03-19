@@ -13,9 +13,8 @@ build/
 # Environment — never commit real secrets
 .env
 .env.local
+.env.production
 *.env.local
-# Keep .env.production as a template (no real values)
-# If you add real values to .env.production, add it here too
 
 # Data (don't commit PDFs or raw data)
 data/pdfs/
@@ -53,3 +52,6 @@ frontend/.env.local
 # Scripts / misc
 *.bat.bak
 scripts/__pycache__/
+
+# Phase documentation — private, kept local only
+docs/phase-*.md
