@@ -10,9 +10,12 @@ venv/
 dist/
 build/
 
-# Environment
+# Environment — never commit real secrets
 .env
+.env.local
 *.env.local
+# Keep .env.production as a template (no real values)
+# If you add real values to .env.production, add it here too
 
 # Data (don't commit PDFs or raw data)
 data/pdfs/
