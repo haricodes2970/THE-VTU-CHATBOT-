@@ -10,7 +10,7 @@ from loguru import logger
 from ai.embeddings.embedding_generator import EmbeddingGenerator
 from backend.core.config import settings
 
-MIN_SCORE = 0.5
+MIN_SCORE = 0.2
 
 
 class ContextRetriever:
@@ -75,8 +75,6 @@ class ContextRetriever:
             pinecone_filter: dict = {}
             if "semester" in filters:
                 pinecone_filter["semester"] = {"$eq": str(filters["semester"])}
-            if "subject" in filters:
-                pinecone_filter["title"] = {"$eq": str(filters["subject"])}
 
             kwargs = {"vector": embedding, "top_k": top_k, "include_metadata": True}
             if pinecone_filter:

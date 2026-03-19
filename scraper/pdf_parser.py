@@ -23,6 +23,11 @@ except ImportError:
 try:
     from PIL import Image
     import pytesseract
+    import os
+    # Hardcode Tesseract path for Windows
+    tesseract_path = r"C:\Users\sriha\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+    if os.path.exists(tesseract_path):
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False

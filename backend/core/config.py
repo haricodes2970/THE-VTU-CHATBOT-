@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # ── Groq ─────────────────────────────────────────────────
     groq_api_key: str = ""
-    groq_model: str = "llama3-8b-8192"
+    groq_model: str = "llama-3.1-8b-instant"
 
     # ── Pinecone ─────────────────────────────────────────────
     pinecone_api_key: str = ""
