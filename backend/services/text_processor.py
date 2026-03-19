@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from loguru import logger
-from python_dateutil.parser import parse as dateutil_parse
+from dateutil.parser import parse as dateutil_parse
 
 # ── Date patterns ─────────────────────────────────────────────────────────────
 _DATE_PATTERNS = [
