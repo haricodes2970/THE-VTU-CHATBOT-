@@ -67,6 +67,17 @@ def _job_cleanup_sessions():
         logger.error(f"[Scheduler] cleanup_sessions failed: {e}")
 
 
+def _job_keep_alive():
+    """Ping own /health endpoint every 10 minutes to prevent Render spin-down."""
+    try:
+        import requests as req
+        url = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:8000")
+        req.get(f"{url}/health", timeout=10)
+        logger.debug("[Scheduler] keep_alive ping sent")
+    except Exception as e:
+        logger.debug(f"[Scheduler] keep_alive ping failed (non-critical): {e}")
+
+
 def _job_health_check():
     """Log DB + Pinecone health status hourly."""
     logger.info("[Scheduler] health_check_log starting")
@@ -87,6 +98,7 @@ _JOB_MAP = {
     "retry_notifications": _job_retry_notifications,
     "cleanup_sessions": _job_cleanup_sessions,
     "health_check": _job_health_check,
+    "keep_alive": _job_keep_alive,
 }
 
 
@@ -137,6 +149,14 @@ class SchedulerService:
             trigger="interval",
             hours=1,
             id="health_check",
+            replace_existing=True,
+        )
+
+        self._scheduler.add_job(
+            _job_keep_alive,
+            trigger="interval",
+            minutes=10,
+            id="keep_alive",
             replace_existing=True,
         )
 
