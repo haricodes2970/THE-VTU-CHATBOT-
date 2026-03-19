@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_port: int = 8000
     secret_key: str = "change-me"
+    allowed_origins: str = "http://localhost:3000,http://localhost:5173"
 
     # ── Database ─────────────────────────────────────────────
     database_url: str = "postgresql://vtu_user:vtu_password@localhost:5432/vtu_scheduler"
