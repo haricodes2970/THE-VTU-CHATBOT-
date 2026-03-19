@@ -5,10 +5,18 @@ FastAPI application factory — startup, middleware, router registration.
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi import HTTPException
 from loguru import logger
 
 from backend.core.config import settings
 from backend.core.database import check_db_connection, engine, Base
+from backend.api.middleware.rate_limit import RateLimitMiddleware
+from backend.api.middleware.error_handler import (
+    http_exception_handler,
+    validation_exception_handler,
+    generic_exception_handler,
+)
 
 
 # ── Lifespan ─────────────────────────────────────────────────
@@ -26,9 +34,21 @@ async def lifespan(app: FastAPI):
     if not check_db_connection():
         logger.warning("Could not connect to database — check Docker is running")
 
+    # Start scheduler (Phase 10)
+    try:
+        from backend.services.scheduler_service import SchedulerService
+        app.state.scheduler = SchedulerService()
+        app.state.scheduler.start()
+        logger.info("Scheduler started")
+    except Exception as e:
+        logger.warning(f"Scheduler not started: {e}")
+
     logger.info(f"Server ready on port {settings.app_port}")
     yield
 
+    # Shutdown
+    if hasattr(app.state, "scheduler"):
+        app.state.scheduler.stop()
     logger.info("Shutting down...")
 
 
@@ -43,7 +63,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # ── CORS ─────────────────────────────────────────────────
+    # ── Exception handlers ────────────────────────────────────
+    app.add_exception_handler(HTTPException, http_exception_handler)
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(Exception, generic_exception_handler)
+
+    # ── Middleware ────────────────────────────────────────────
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -63,13 +89,22 @@ def create_app() -> FastAPI:
     app.include_router(schedule_router,      prefix="/api/v1", tags=["Exam Schedule"])
     app.include_router(notifications_router, prefix="/api/v1", tags=["Notifications"])
 
+    # Admin routes (Phase 10)
+    try:
+        from backend.api.routes.admin import router as admin_router
+        app.include_router(admin_router, prefix="/api/v1", tags=["Admin"])
+    except ImportError:
+        pass
+
     # ── Health check ─────────────────────────────────────────
     @app.get("/health", tags=["Health"])
     def health():
+        db_ok = check_db_connection()
         return {
-            "status": "ok",
+            "status": "ok" if db_ok else "degraded",
             "app": settings.app_name,
             "env": settings.app_env,
+            "database": "ok" if db_ok else "unavailable",
         }
 
     return app
