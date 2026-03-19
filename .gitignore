@@ -41,3 +41,12 @@ logs/
 # Docker volumes
 postgres_data/
 redis_data/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Scripts / misc
+*.bat.bak
+scripts/__pycache__/
