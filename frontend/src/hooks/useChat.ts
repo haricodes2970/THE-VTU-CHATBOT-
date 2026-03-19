@@ -1,7 +1,7 @@
 // src/hooks/useChat.ts — Custom React hook for chat state management
 
 import { useState, useCallback } from "react";
-import { v4 as uuidv4 } from "https://esm.sh/uuid@9";
+const uuidv4 = () => crypto.randomUUID();
 import { chatApi } from "../api/client";
 import type { ChatMessage } from "../types";
 
