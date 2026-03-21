@@ -201,17 +201,24 @@ class ScrapingPipeline:
 
     # ── Two-phase scraping (Render-friendly) ──────────────────────
 
-    def discover(self, force: bool = False) -> dict:
+    def discover(
+        self, force: bool = False, start_page: int = 1, max_pages: int = 5
+    ) -> dict:
         """
-        PHASE 1 — Fast (~30s). Fetches listing pages only, saves post URLs
-        to pending_posts.json queue. Call once before process_next loop.
+        PHASE 1 — Fetches listing pages only, saves post URLs to queue.
+        Defaults to max_pages=5 so each call finishes in ~15s (well within
+        Render's 30s HTTP timeout). Call twice to cover all 10 pages:
+          discover(force=True, start_page=1, max_pages=5)   # pages 1–5
+          discover(start_page=6, max_pages=5)               # pages 6–10
         """
         processed_posts = set() if force else self._load_processed_posts()
         if force and PROCESSED_POSTS_FILE.exists():
             PROCESSED_POSTS_FILE.unlink()
             processed_posts = set()
 
-        new_urls = self.scraper.discover_post_urls(processed_posts)
+        new_urls = self.scraper.discover_post_urls(
+            processed_posts, start_page=start_page, max_pages=max_pages
+        )
 
         # Merge with any existing pending (avoid duplicates)
         existing_pending = set(self._load_pending_posts())

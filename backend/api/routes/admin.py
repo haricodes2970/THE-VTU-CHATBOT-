@@ -30,15 +30,18 @@ class TriggerScrapeRequest(BaseModel):
     summary="Phase 1: Discover new post URLs from VTU listing pages (admin)",
     dependencies=[Depends(_require_admin)],
 )
-def discover_posts(force: bool = False):
+def discover_posts(force: bool = False, start_page: int = 1, max_pages: int = 5):
     """
     Fetches VTU timetable listing pages and saves new post URLs to a queue.
-    Fast (~30s). Call once before /admin/process-next loop.
+    Defaults to max_pages=5 so it finishes within Render's 30s timeout.
+    Call twice to cover all 10 pages:
+      POST /admin/discover?force=true&start_page=1&max_pages=5
+      POST /admin/discover&start_page=6&max_pages=5
     force=true clears processed history and re-discovers all 2022+ posts.
     """
     from scraper.pipeline import ScrapingPipeline
     pipeline = ScrapingPipeline()
-    result = pipeline.discover(force=force)
+    result = pipeline.discover(force=force, start_page=start_page, max_pages=max_pages)
     return result
 
 

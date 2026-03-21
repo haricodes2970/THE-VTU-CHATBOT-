@@ -113,18 +113,24 @@ class VTUScraper:
 
     # ── Main scrape method ────────────────────────────────────────
 
-    def discover_post_urls(self, processed_post_urls: set[str]) -> list[str]:
+    def discover_post_urls(
+        self,
+        processed_post_urls: set[str],
+        start_page: int = 1,
+        max_pages: int = 10,
+    ) -> list[str]:
         """
         FAST phase — only fetch listing pages (no individual post visits).
         Returns list of new post URLs not in processed_post_urls.
-        Completes in ~30s (10 pages × 3s delay).
+        Use start_page/max_pages to paginate across multiple HTTP calls
+        (each call safely fits within Render's 30s timeout with max_pages<=5).
         """
         new_urls: list[str] = []
 
-        for page_num in range(1, 11):
+        for page_num in range(start_page, start_page + max_pages):
             page_url = f"{self.TIMETABLE_BASE}page/{page_num}/"
             try:
-                resp = self._get(page_url)
+                resp = self._get(page_url, delay=0.5)  # listing pages: 0.5s is enough
             except requests.HTTPError as e:
                 status = e.response.status_code if e.response is not None else 0
                 if status == 404:
