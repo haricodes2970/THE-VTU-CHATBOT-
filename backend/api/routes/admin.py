@@ -57,19 +57,22 @@ def discover_posts(force: bool = False, start_page: int = 1, max_pages: int = 5)
     summary="Phase 2: Process next post(s) from queue (admin)",
     dependencies=[Depends(_require_admin)],
 )
-def process_next(batch: int = 1, embed: bool = False):
+def process_next(batch: int = 1, embed: bool = False, skip_pdf: bool = True):
     """
-    Visits next `batch` posts in queue, downloads PDF, extracts text, saves to DB.
-    embed=false (default): skip Pinecone embedding (fast, ~20-30s per post).
-    embed=true: also embed into Pinecone (slow, ~60-120s per post on free tier).
-    Use /admin/embed-pending after to embed all saved circulars.
+    Visits next `batch` posts in queue and saves to DB.
+    skip_pdf=true (default): use post body HTML text — fast, ~10-15s per post.
+    skip_pdf=false: download + parse PDF — slow, ~35-55s per post (may OOM).
+    embed=false (default): skip Pinecone embedding. Use /admin/embed-pending after.
+    embed=true: also embed into Pinecone (adds 30-120s per post).
     """
     from backend.core.database import SessionLocal
     from scraper.pipeline import ScrapingPipeline
     db = SessionLocal()
     try:
         pipeline = ScrapingPipeline(db_session=db)
-        result = pipeline.process_next(db=db, batch=min(batch, 5), embed=embed)
+        result = pipeline.process_next(
+            db=db, batch=min(batch, 5), embed=embed, skip_pdf=skip_pdf
+        )
         return result
     finally:
         db.close()

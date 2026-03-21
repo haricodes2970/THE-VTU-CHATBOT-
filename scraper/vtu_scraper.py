@@ -294,6 +294,14 @@ class VTUScraper:
             logger.warning(f"No PDF found in post: {post_url}")
             return None
 
+        # Extract post body text (lighter than downloading + parsing the PDF)
+        post_body = ""
+        if content_div:
+            # Remove script/style tags, get readable text
+            for tag in content_div.find_all(["script", "style"]):
+                tag.decompose()
+            post_body = content_div.get_text(separator="\n", strip=True)[:5000]
+
         title = post_title or "VTU Timetable"
         return {
             "post_url": post_url,
@@ -304,6 +312,7 @@ class VTUScraper:
             "course_type": self.detect_course_type(title),
             "exam_session": self.extract_exam_session(title),
             "semester_range": self.extract_semester_range(title),
+            "post_body": post_body,  # extracted from HTML (no PDF needed)
         }
 
     # ── Metadata extraction helpers ───────────────────────────────

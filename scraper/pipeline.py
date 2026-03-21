@@ -282,12 +282,15 @@ class ScrapingPipeline:
         logger.info(f"discover: queued {len(new_urls)} new posts ({len(combined)} total pending)")
         return {"queued": len(new_urls), "total_pending": len(combined)}
 
-    def process_next(self, db=None, batch: int = 1, embed: bool = True) -> dict:
+    def process_next(
+        self, db=None, batch: int = 1, embed: bool = True, skip_pdf: bool = False
+    ) -> dict:
         """
-        PHASE 2 — Processes next `batch` posts from pending_posts.json queue.
-        Each post: visit post page → download PDF → extract → save to DB.
-        embed=True (default): also embed into Pinecone (slow, ~60-90s on free tier).
-        embed=False: save metadata only (fast, ~20-30s). Call embed-pending separately.
+        PHASE 2 — Processes next `batch` posts from queue.
+        skip_pdf=True (recommended for Render free tier): uses post body HTML text
+          instead of downloading + parsing the PDF. Fast (~10-15s per post).
+        skip_pdf=False: downloads and parses the actual PDF (~35-55s per post).
+        embed=True: also embed into Pinecone (adds ~30-120s per post).
         """
         if db:
             self.db = db
@@ -318,31 +321,42 @@ class ScrapingPipeline:
 
                 pdf_url = metadata["pdf_url"]
 
-                # Download PDF
-                pdf_bytes, pdf_hash = self._download_pdf(pdf_url)
+                if skip_pdf:
+                    # Fast mode: use post HTML body text instead of downloading PDF
+                    content = metadata.get("post_body", "") or metadata["title"]
+                    pdf_hash = ""
+                    old_circular = self._find_old_circular(
+                        metadata["exam_session"],
+                        metadata["scheme"],
+                        metadata["semester_range"],
+                    )
+                    is_revised = old_circular is not None
+                else:
+                    # Full mode: download and parse PDF
+                    pdf_bytes, pdf_hash = self._download_pdf(pdf_url)
 
-                existing_hash = seen_pdfs.get(pdf_url)
-                if existing_hash == pdf_hash:
-                    logger.info(f"PDF unchanged: {pdf_url}")
-                    processed_posts.add(post_url)
-                    skipped_count += 1
-                    continue
+                    existing_hash = seen_pdfs.get(pdf_url)
+                    if existing_hash == pdf_hash:
+                        logger.info(f"PDF unchanged: {pdf_url}")
+                        processed_posts.add(post_url)
+                        skipped_count += 1
+                        continue
 
-                old_circular = self._find_old_circular(
-                    metadata["exam_session"],
-                    metadata["scheme"],
-                    metadata["semester_range"],
-                )
-                is_revised = old_circular is not None
+                    old_circular = self._find_old_circular(
+                        metadata["exam_session"],
+                        metadata["scheme"],
+                        metadata["semester_range"],
+                    )
+                    is_revised = old_circular is not None
 
-                text = self._extract_text_from_bytes(pdf_bytes, pdf_url)
-                pdf_bytes = None
+                    content = self._extract_text_from_bytes(pdf_bytes, pdf_url)
+                    pdf_bytes = None
 
                 circular_data = {
                     "title": metadata["title"],
                     "url": pdf_url,
                     "source_post_url": post_url,
-                    "content": text,
+                    "content": content,
                     "circular_date": metadata["published_date"],
                     "scheme": metadata["scheme"],
                     "course_type": metadata["course_type"],
