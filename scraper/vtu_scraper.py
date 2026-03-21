@@ -267,8 +267,21 @@ class VTUScraper:
             return None
 
         if not post_title:
-            h1 = soup.find("h1", class_=re.compile(r"entry-title", re.I))
-            post_title = h1.get_text(strip=True) if h1 else ""
+            # Try multiple selectors — VTU WordPress theme varies
+            h1 = (
+                soup.find("h1", class_=re.compile(r"entry-title|post-title", re.I))
+                or soup.find("h1")
+            )
+            if h1:
+                post_title = h1.get_text(strip=True)
+            else:
+                # Fall back to <title> tag (WordPress: "Post Title – Site Name")
+                title_tag = soup.find("title")
+                if title_tag:
+                    raw = title_tag.get_text(strip=True)
+                    post_title = raw.split("–")[0].split("|")[0].strip()
+                else:
+                    post_title = ""
 
         # Find PDF in .entry-content first, then anywhere on page
         pdf_url: Optional[str] = None

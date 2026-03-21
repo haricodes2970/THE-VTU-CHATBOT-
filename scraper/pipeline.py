@@ -322,8 +322,27 @@ class ScrapingPipeline:
                 pdf_url = metadata["pdf_url"]
 
                 if skip_pdf:
-                    # Fast mode: use post HTML body text instead of downloading PDF
-                    content = metadata.get("post_body", "") or metadata["title"]
+                    # Fast mode: build rich content from metadata (no PDF download)
+                    title = metadata["title"]
+                    exam_session = metadata.get("exam_session", "")
+                    scheme = metadata.get("scheme", "")
+                    semester = metadata.get("semester_range", "")
+                    course = metadata.get("course_type", "")
+                    pub_date = str(metadata.get("published_date", ""))[:10]
+                    pdf_link = metadata["pdf_url"]
+                    post_body = metadata.get("post_body", "")
+                    # Build a descriptive text combining all metadata
+                    content = (
+                        f"{title}. "
+                        f"VTU Exam Timetable published {pub_date}. "
+                        f"Scheme: {scheme}. "
+                        f"Semester: {semester}. "
+                        f"Exam Session: {exam_session}. "
+                        f"Course Type: {course}. "
+                        f"Download timetable PDF: {pdf_link}."
+                    )
+                    if post_body and len(post_body) > 50:
+                        content += f"\n\n{post_body}"
                     pdf_hash = ""
                     old_circular = self._find_old_circular(
                         metadata["exam_session"],

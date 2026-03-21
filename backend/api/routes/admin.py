@@ -108,11 +108,22 @@ def embed_pending(batch: int = 1):
         for c in circulars:
             try:
                 count = embedder.embed_circular(c, db=db)
+                if count == 0:
+                    # No vectors (empty content) — mark indexed to avoid infinite retry
+                    c.is_indexed = True
+                    db.commit()
+                    logger.warning(f"Circular {c.id} has no embeddable content, marking indexed")
                 embedded += 1
                 logger.info(f"Embedded circular {c.id}: {count} vectors")
             except Exception as e:
                 errors.append(f"circular {c.id}: {str(e)}")
                 logger.error(f"Embed failed for circular {c.id}: {e}")
+                # Mark as indexed to avoid blocking the queue on repeated failures
+                c.is_indexed = True
+                try:
+                    db.commit()
+                except Exception:
+                    pass
         remaining = (
             db.query(Circular)
             .filter(Circular.is_indexed == False, Circular.is_superseded == False)  # noqa: E712
