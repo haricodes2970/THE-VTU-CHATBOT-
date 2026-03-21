@@ -20,6 +20,7 @@ from scraper.pdf_parser import PDFParser
 
 PROCESSED_POSTS_FILE = Path("data/raw/processed_post_urls.json")
 SEEN_PDFS_FILE = Path("data/raw/seen_circulars.json")
+PENDING_POSTS_FILE = Path("data/raw/pending_posts.json")
 PDF_TEMP_DIR = Path("data/pdfs")
 PIPELINE_LOG_FILE = Path("data/raw/pipeline_log.json")
 
@@ -65,6 +66,15 @@ class ScrapingPipeline:
         PROCESSED_POSTS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     # ── State I/O ─────────────────────────────────────────────────
+
+    def _load_pending_posts(self) -> list[str]:
+        return _load_json(PENDING_POSTS_FILE, [])
+
+    def _save_pending_posts(self, urls: list[str]) -> None:
+        _save_json(PENDING_POSTS_FILE, urls)
+
+    def get_pending_count(self) -> int:
+        return len(self._load_pending_posts())
 
     def _load_processed_posts(self) -> set[str]:
         return set(_load_json(PROCESSED_POSTS_FILE, []))
@@ -188,6 +198,133 @@ class ScrapingPipeline:
             logger.info(f"Embedded circular {circular.id}: {count} vectors")
         except Exception as e:
             logger.error(f"Embed failed for circular {getattr(circular, 'id', '?')}: {e}")
+
+    # ── Two-phase scraping (Render-friendly) ──────────────────────
+
+    def discover(self, force: bool = False) -> dict:
+        """
+        PHASE 1 — Fast (~30s). Fetches listing pages only, saves post URLs
+        to pending_posts.json queue. Call once before process_next loop.
+        """
+        processed_posts = set() if force else self._load_processed_posts()
+        if force and PROCESSED_POSTS_FILE.exists():
+            PROCESSED_POSTS_FILE.unlink()
+            processed_posts = set()
+
+        new_urls = self.scraper.discover_post_urls(processed_posts)
+
+        # Merge with any existing pending (avoid duplicates)
+        existing_pending = set(self._load_pending_posts())
+        combined = list(existing_pending | set(new_urls))
+        self._save_pending_posts(combined)
+
+        logger.info(f"discover: queued {len(new_urls)} new posts ({len(combined)} total pending)")
+        return {"queued": len(new_urls), "total_pending": len(combined)}
+
+    def process_next(self, db=None, batch: int = 1) -> dict:
+        """
+        PHASE 2 — Processes next `batch` posts from pending_posts.json queue.
+        Each post: visit post page → download PDF → extract → embed → save state.
+        Call repeatedly until pending queue is empty.
+        """
+        if db:
+            self.db = db
+
+        pending = self._load_pending_posts()
+        if not pending:
+            return {"processed": 0, "remaining": 0, "message": "Queue empty — done!"}
+
+        to_process = pending[:batch]
+        remaining = pending[batch:]
+
+        processed_posts = self._load_processed_posts()
+        seen_pdfs = self._load_seen_pdfs()
+
+        new_count = 0
+        revised_count = 0
+        skipped_count = 0
+        errors: list[str] = []
+
+        for post_url in to_process:
+            try:
+                # Visit post page and extract metadata
+                metadata = self.scraper.extract_post_metadata(post_url, "", None)
+                if not metadata:
+                    logger.warning(f"No metadata/PDF found for: {post_url}")
+                    processed_posts.add(post_url)
+                    continue
+
+                pdf_url = metadata["pdf_url"]
+
+                # Download PDF
+                pdf_bytes, pdf_hash = self._download_pdf(pdf_url)
+
+                existing_hash = seen_pdfs.get(pdf_url)
+                if existing_hash == pdf_hash:
+                    logger.info(f"PDF unchanged: {pdf_url}")
+                    processed_posts.add(post_url)
+                    skipped_count += 1
+                    continue
+
+                old_circular = self._find_old_circular(
+                    metadata["exam_session"],
+                    metadata["scheme"],
+                    metadata["semester_range"],
+                )
+                is_revised = old_circular is not None
+
+                text = self._extract_text_from_bytes(pdf_bytes, pdf_url)
+                pdf_bytes = None
+
+                circular_data = {
+                    "title": metadata["title"],
+                    "url": pdf_url,
+                    "source_post_url": post_url,
+                    "content": text,
+                    "circular_date": metadata["published_date"],
+                    "scheme": metadata["scheme"],
+                    "course_type": metadata["course_type"],
+                    "exam_session": metadata["exam_session"],
+                    "semester_range": metadata["semester_range"],
+                    "pdf_hash": pdf_hash,
+                    "is_superseded": False,
+                }
+                new_circular = self._save_circular(circular_data)
+
+                if is_revised:
+                    success = self._handle_revised_timetable(old_circular, new_circular)
+                    if success:
+                        revised_count += 1
+                    else:
+                        errors.append(f"Atomic re-index failed: {pdf_url}")
+                        if new_circular:
+                            self._embed_normal(new_circular)
+                        new_count += 1
+                else:
+                    if new_circular:
+                        self._embed_normal(new_circular)
+                    new_count += 1
+
+                processed_posts.add(post_url)
+                seen_pdfs[pdf_url] = pdf_hash
+
+            except Exception as e:
+                logger.error(f"process_next error for {post_url}: {e}")
+                errors.append(f"{post_url}: {str(e)}")
+
+        # Save state
+        self._save_pending_posts(remaining)
+        self._save_processed_posts(processed_posts)
+        self._save_seen_pdfs(seen_pdfs)
+
+        return {
+            "processed": len(to_process),
+            "new": new_count,
+            "revised": revised_count,
+            "skipped": skipped_count,
+            "remaining": len(remaining),
+            "errors": errors,
+        }
 
     # ── Main incremental run ───────────────────────────────────────
 

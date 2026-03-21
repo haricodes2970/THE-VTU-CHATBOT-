@@ -26,36 +26,60 @@ class TriggerScrapeRequest(BaseModel):
 
 
 @router.post(
+    "/admin/discover",
+    summary="Phase 1: Discover new post URLs from VTU listing pages (admin)",
+    dependencies=[Depends(_require_admin)],
+)
+def discover_posts(force: bool = False):
+    """
+    Fetches VTU timetable listing pages and saves new post URLs to a queue.
+    Fast (~30s). Call once before /admin/process-next loop.
+    force=true clears processed history and re-discovers all 2022+ posts.
+    """
+    from scraper.pipeline import ScrapingPipeline
+    pipeline = ScrapingPipeline()
+    result = pipeline.discover(force=force)
+    return result
+
+
+@router.post(
+    "/admin/process-next",
+    summary="Phase 2: Process next post from queue (admin)",
+    dependencies=[Depends(_require_admin)],
+)
+def process_next():
+    """
+    Visits next post in queue, downloads PDF, extracts text, embeds into Pinecone.
+    Call repeatedly until remaining=0. Each call takes 10-30s.
+    """
+    from backend.core.database import SessionLocal
+    from scraper.pipeline import ScrapingPipeline
+    db = SessionLocal()
+    try:
+        pipeline = ScrapingPipeline(db_session=db)
+        result = pipeline.process_next(db=db, batch=1)
+        return result
+    finally:
+        db.close()
+
+
+@router.post(
     "/admin/trigger-scrape",
     summary="Trigger timetable scraping pipeline (admin)",
     dependencies=[Depends(_require_admin)],
 )
 def trigger_scrape(body: TriggerScrapeRequest = TriggerScrapeRequest()):
     """
-    incremental   → discover new posts and process up to 5 at a time (call repeatedly)
-    force_recheck → clears state then processes up to 5 posts (call repeatedly until done)
-
-    Designed to be called repeatedly — each call processes the next batch of posts.
-    Check /admin/scrape-stats to track progress.
+    incremental   → run Phase 1 discover only (call process-next separately)
+    force_recheck → clear state + run Phase 1 discover (call process-next separately)
     """
     if body.mode not in ("incremental", "force_recheck"):
-        raise HTTPException(
-            status_code=400,
-            detail="mode must be 'incremental' or 'force_recheck'",
-        )
+        raise HTTPException(status_code=400, detail="mode must be 'incremental' or 'force_recheck'")
 
-    from backend.core.database import SessionLocal
     from scraper.pipeline import ScrapingPipeline
-    db = SessionLocal()
-    try:
-        pipeline = ScrapingPipeline(db_session=db)
-        if body.mode == "force_recheck":
-            result = pipeline.run_force_recheck(db=db)
-        else:
-            result = pipeline.run_incremental(db=db)
-        return {"status": "done", "mode": body.mode, "result": result}
-    finally:
-        db.close()
+    pipeline = ScrapingPipeline()
+    result = pipeline.discover(force=(body.mode == "force_recheck"))
+    return {"status": "discovered", "mode": body.mode, "result": result}
 
 
 # ── Clear state ────────────────────────────────────────────────
@@ -106,7 +130,9 @@ def scrape_stats():
     except Exception:
         pass
 
-    processed_post_count = ScrapingPipeline().get_processed_count()
+    pipeline_inst = ScrapingPipeline()
+    processed_post_count = pipeline_inst.get_processed_count()
+    pending_post_count = pipeline_inst.get_pending_count()
 
     last_run = None
     log = _load_json(PIPELINE_LOG_FILE, [])
@@ -119,6 +145,7 @@ def scrape_stats():
         "active_timetables": active,
         "pinecone_vector_count": pinecone_count,
         "processed_post_urls": processed_post_count,
+        "pending_in_queue": pending_post_count,
         "last_scrape_run": last_run,
     }
 

@@ -108,6 +108,56 @@ class VTUScraper:
 
     # ── Main scrape method ────────────────────────────────────────
 
+    def discover_post_urls(self, processed_post_urls: set[str]) -> list[str]:
+        """
+        FAST phase — only fetch listing pages (no individual post visits).
+        Returns list of new post URLs not in processed_post_urls.
+        Completes in ~30s (10 pages × 3s delay).
+        """
+        new_urls: list[str] = []
+
+        for page_num in range(1, 11):
+            page_url = f"{self.TIMETABLE_BASE}page/{page_num}/"
+            try:
+                resp = self._get(page_url)
+            except requests.HTTPError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if status == 404:
+                    logger.info(f"Page {page_num} → 404, stopping pagination")
+                else:
+                    logger.error(f"HTTP {status} on page {page_num}: {e}")
+                break
+            except Exception as e:
+                logger.error(f"Failed to fetch page {page_num}: {e}")
+                break
+
+            soup = BeautifulSoup(resp.text, "lxml")
+            post_links = soup.select("h2.entry-title a[href]")
+            if not post_links:
+                post_links = soup.select("article h2 a[href], .post-title a[href]")
+            if not post_links:
+                break
+
+            all_pre_2022 = True
+            for link_el in post_links:
+                post_url = link_el["href"].strip()
+                card = link_el.find_parent("article") or link_el.find_parent("li")
+                pub_date = self._parse_listing_date(card)
+
+                if pub_date and pub_date < self.MIN_DATE:
+                    continue
+
+                all_pre_2022 = False
+                if post_url not in processed_post_urls:
+                    new_urls.append(post_url)
+
+            if all_pre_2022:
+                logger.info(f"All posts on page {page_num} are pre-2022 — stopping")
+                break
+
+        logger.info(f"discover_post_urls: found {len(new_urls)} new post URLs")
+        return new_urls
+
     def scrape_new_timetables(self, processed_post_urls: set[str]) -> list[dict]:
         """
         Fetches listing pages /page/1/ … /page/10/ until:
