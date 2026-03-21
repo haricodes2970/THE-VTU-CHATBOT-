@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 # Download spaCy model during build
 RUN python -m spacy download en_core_web_sm
 
+# Pre-download fastembed embedding model into the image (avoids runtime download + OOM)
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2')"
+
 # Copy application source
 COPY . .
 
