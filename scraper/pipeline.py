@@ -139,7 +139,7 @@ class ScrapingPipeline:
         Download PDF bytes and return (content, md5_hash).
         Raises on HTTP error.
         """
-        resp = requests.get(pdf_url, headers=_HTTP_HEADERS, timeout=25)
+        resp = requests.get(pdf_url, headers=_HTTP_HEADERS, timeout=20)
         resp.raise_for_status()
         content = resp.content
         pdf_hash = self.scraper.compute_pdf_hash(content)

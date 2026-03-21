@@ -23,7 +23,7 @@ HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
 }
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 15
 
 _ROMAN = {
     "i": 1, "ii": 2, "iii": 3, "iv": 4,
@@ -72,8 +72,14 @@ class VTUScraper:
         return response
 
     def _get_fast(self, url: str) -> requests.Response:
-        """GET with no delay — for process_next single-item calls."""
-        return self._get(url, delay=0)
+        """
+        GET with no delay and NO retry — for process_next single-item calls.
+        Fails fast on timeout (no 3-retry loop that could burn 60s+).
+        """
+        logger.info(f"Fetching (fast): {url}")
+        response = self.session.get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        return response
 
     # ── Date parsing ───────────────────────────────────────────────
 
