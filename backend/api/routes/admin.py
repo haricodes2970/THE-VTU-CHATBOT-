@@ -129,6 +129,38 @@ def scrape_stats():
     }
 
 
+# ── Debug scraper test ────────────────────────────────────────
+
+@router.get(
+    "/admin/test-scraper",
+    summary="Test scraper fetches one page (admin)",
+    dependencies=[Depends(_require_admin)],
+)
+def test_scraper():
+    """Fetches page 1 of VTU timetable listings and returns what it finds. No DB writes."""
+    try:
+        from scraper.vtu_scraper import VTUScraper
+        scraper = VTUScraper()
+        import requests
+        from bs4 import BeautifulSoup
+        resp = requests.get(
+            VTUScraper.TIMETABLE_BASE,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=30,
+        )
+        soup = BeautifulSoup(resp.text, "lxml")
+        links = soup.select("h2.entry-title a[href]")
+        posts = [{"url": l["href"], "title": l.get_text(strip=True)[:80]} for l in links[:5]]
+        return {
+            "status": "ok",
+            "http_status": resp.status_code,
+            "posts_found": len(links),
+            "sample": posts,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 # ── Existing endpoints ─────────────────────────────────────────
 
 @router.post(
