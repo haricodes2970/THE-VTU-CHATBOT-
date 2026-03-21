@@ -5,7 +5,7 @@ All database ORM models — Users, Circulars, ExamSchedules, Subscriptions, Noti
 from datetime import datetime
 from sqlalchemy import (
     String, Text, Integer, Boolean, DateTime,
-    ForeignKey, Enum as SAEnum
+    ForeignKey, Enum as SAEnum, Index
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
@@ -60,6 +60,25 @@ class Circular(Base):
     is_indexed: Mapped[bool] = mapped_column(Boolean, default=False)
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # ── Timetable-specific fields (all nullable for backward compat) ──
+    scheme: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    course_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    exam_session: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    semester_range: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_superseded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    source_post_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    superseded_by_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("circulars.id"), nullable=True
+    )
+
+    __table_args__ = (
+        # For dedup queries: find same exam session across circulars
+        Index("ix_circulars_dedup", "exam_session", "scheme", "semester_range"),
+        # For pipeline queries: find active, unindexed circulars fast
+        Index("ix_circulars_pipeline", "is_superseded", "is_indexed"),
+    )
 
     def __repr__(self) -> str:
         return f"<Circular {self.title[:50]}>"

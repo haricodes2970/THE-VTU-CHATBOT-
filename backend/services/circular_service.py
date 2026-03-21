@@ -33,8 +33,16 @@ class CircularService:
             url=circular_data["url"],
             pdf_path=circular_data.get("pdf_path"),
             content=circular_data.get("content"),
-            circular_date=circular_data.get("date"),
+            circular_date=circular_data.get("circular_date") or circular_data.get("date"),
             scraped_at=datetime.utcnow(),
+            # Timetable-specific fields
+            scheme=circular_data.get("scheme"),
+            course_type=circular_data.get("course_type"),
+            exam_session=circular_data.get("exam_session"),
+            semester_range=circular_data.get("semester_range"),
+            pdf_hash=circular_data.get("pdf_hash"),
+            is_superseded=circular_data.get("is_superseded", False),
+            source_post_url=circular_data.get("source_post_url"),
         )
         db.add(circular)
         db.commit()
@@ -96,3 +104,36 @@ class CircularService:
             Circular.is_indexed == False  # noqa: E712
         )
         return list(db.execute(stmt).scalars().all())
+
+    def get_latest_timetable_pdf_url(
+        self, db: Session, scheme: str | None = None, course_type: str | None = None
+    ) -> str | None:
+        """
+        Return PDF URL of the most recently published non-superseded circular
+        matching scheme + course_type. Used as last-resort fallback in the bot.
+        """
+        stmt = select(Circular).where(Circular.is_superseded == False)  # noqa: E712
+        if scheme:
+            stmt = stmt.where(Circular.scheme == scheme)
+        if course_type:
+            stmt = stmt.where(Circular.course_type == course_type)
+        stmt = stmt.order_by(Circular.circular_date.desc()).limit(1)
+        result = db.execute(stmt).scalar_one_or_none()
+        return result.url if result else None
+
+    def get_active_timetables_count(self, db: Session) -> int:
+        """Count non-superseded, indexed timetables."""
+        from sqlalchemy import func
+        return db.execute(
+            select(func.count(Circular.id)).where(
+                Circular.is_superseded == False,  # noqa: E712
+                Circular.is_indexed == True,  # noqa: E712
+            )
+        ).scalar() or 0
+
+    def get_superseded_count(self, db: Session) -> int:
+        """Count superseded circulars."""
+        from sqlalchemy import func
+        return db.execute(
+            select(func.count(Circular.id)).where(Circular.is_superseded == True)  # noqa: E712
+        ).scalar() or 0
