@@ -30,14 +30,13 @@ class TriggerScrapeRequest(BaseModel):
     summary="Trigger timetable scraping pipeline (admin)",
     dependencies=[Depends(_require_admin)],
 )
-def trigger_scrape(
-    body: TriggerScrapeRequest = TriggerScrapeRequest(),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
-):
+def trigger_scrape(body: TriggerScrapeRequest = TriggerScrapeRequest()):
     """
-    incremental  → only process new posts since last run (default, used by scheduler)
-    force_recheck → clears processed_post_urls.json, visits all 2022+ posts again
-                    USE THIS FOR FIRST-TIME FULL SCRAPE
+    incremental   → discover new posts and process up to 5 at a time (call repeatedly)
+    force_recheck → clears state then processes up to 5 posts (call repeatedly until done)
+
+    Designed to be called repeatedly — each call processes the next batch of posts.
+    Check /admin/scrape-stats to track progress.
     """
     if body.mode not in ("incremental", "force_recheck"):
         raise HTTPException(
@@ -45,23 +44,18 @@ def trigger_scrape(
             detail="mode must be 'incremental' or 'force_recheck'",
         )
 
-    def _run(mode: str):
-        from backend.core.database import SessionLocal
-        from scraper.pipeline import ScrapingPipeline
-        db = SessionLocal()
-        try:
-            pipeline = ScrapingPipeline(db_session=db)
-            if mode == "force_recheck":
-                result = pipeline.run_force_recheck(db=db)
-            else:
-                result = pipeline.run_incremental(db=db)
-            from loguru import logger
-            logger.info(f"Scrape [{mode}] complete: {result}")
-        finally:
-            db.close()
-
-    background_tasks.add_task(_run, body.mode)
-    return {"status": "started", "mode": body.mode}
+    from backend.core.database import SessionLocal
+    from scraper.pipeline import ScrapingPipeline
+    db = SessionLocal()
+    try:
+        pipeline = ScrapingPipeline(db_session=db)
+        if body.mode == "force_recheck":
+            result = pipeline.run_force_recheck(db=db)
+        else:
+            result = pipeline.run_incremental(db=db)
+        return {"status": "done", "mode": body.mode, "result": result}
+    finally:
+        db.close()
 
 
 # ── Clear state ────────────────────────────────────────────────

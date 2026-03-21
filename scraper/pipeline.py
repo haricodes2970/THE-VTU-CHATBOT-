@@ -191,7 +191,7 @@ class ScrapingPipeline:
 
     # ── Main incremental run ───────────────────────────────────────
 
-    def run_incremental(self, db=None) -> dict:
+    def run_incremental(self, db=None, batch_size: int = 3) -> dict:
         """
         Called every 6 hours by the scheduler.
         Returns summary dict.
@@ -208,6 +208,10 @@ class ScrapingPipeline:
         # STEP 2: Scrape new post pages
         new_timetables = self.scraper.scrape_new_timetables(processed_posts)
         logger.info(f"Found {len(new_timetables)} new timetable posts to process")
+
+        # Process in small batches so each HTTP request completes within Render's timeout
+        new_timetables = new_timetables[:batch_size]
+        logger.info(f"Processing batch of {len(new_timetables)} posts")
 
         new_count = 0
         revised_count = 0
@@ -312,7 +316,7 @@ class ScrapingPipeline:
 
     # ── Admin helpers ──────────────────────────────────────────────
 
-    def run_force_recheck(self, db=None) -> dict:
+    def run_force_recheck(self, db=None, batch_size: int = 3) -> dict:
         """
         Clear processed_post_urls.json so all 2022+ posts are re-visited,
         then run incremental. Use once after initial deployment.
@@ -320,7 +324,7 @@ class ScrapingPipeline:
         if PROCESSED_POSTS_FILE.exists():
             PROCESSED_POSTS_FILE.unlink()
             logger.info("Cleared processed_post_urls.json for force_recheck")
-        return self.run_incremental(db=db)
+        return self.run_incremental(db=db, batch_size=batch_size)
 
     def clear_state(self) -> list[str]:
         """Delete both state files. Call before a full fresh rescrape."""
