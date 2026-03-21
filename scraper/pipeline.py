@@ -271,11 +271,12 @@ class ScrapingPipeline:
         logger.info(f"discover: queued {len(new_urls)} new posts ({len(combined)} total pending)")
         return {"queued": len(new_urls), "total_pending": len(combined)}
 
-    def process_next(self, db=None, batch: int = 1) -> dict:
+    def process_next(self, db=None, batch: int = 1, embed: bool = True) -> dict:
         """
         PHASE 2 — Processes next `batch` posts from pending_posts.json queue.
-        Each post: visit post page → download PDF → extract → embed → save state.
-        Call repeatedly until pending queue is empty.
+        Each post: visit post page → download PDF → extract → save to DB.
+        embed=True (default): also embed into Pinecone (slow, ~60-90s on free tier).
+        embed=False: save metadata only (fast, ~20-30s). Call embed-pending separately.
         """
         if db:
             self.db = db
@@ -341,19 +342,22 @@ class ScrapingPipeline:
                 }
                 new_circular = self._save_circular(circular_data)
 
-                if is_revised:
-                    success = self._handle_revised_timetable(old_circular, new_circular)
-                    if success:
-                        revised_count += 1
+                if embed:
+                    if is_revised:
+                        success = self._handle_revised_timetable(old_circular, new_circular)
+                        if success:
+                            revised_count += 1
+                        else:
+                            errors.append(f"Atomic re-index failed: {pdf_url}")
+                            if new_circular:
+                                self._embed_normal(new_circular)
+                            new_count += 1
                     else:
-                        errors.append(f"Atomic re-index failed: {pdf_url}")
                         if new_circular:
                             self._embed_normal(new_circular)
                         new_count += 1
                 else:
-                    if new_circular:
-                        self._embed_normal(new_circular)
-                    new_count += 1
+                    new_count += 1  # saved but not embedded yet
 
                 processed_posts.add(post_url)
                 seen_pdfs[pdf_url] = pdf_hash

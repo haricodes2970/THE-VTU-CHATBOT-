@@ -5,6 +5,7 @@ Admin-only endpoints protected by X-Admin-Key header.
 from fastapi import APIRouter, Depends, HTTPException, Header, BackgroundTasks, Request
 from pydantic import BaseModel
 from typing import Optional
+from loguru import logger
 
 from backend.core.config import settings
 
@@ -56,18 +57,65 @@ def discover_posts(force: bool = False, start_page: int = 1, max_pages: int = 5)
     summary="Phase 2: Process next post(s) from queue (admin)",
     dependencies=[Depends(_require_admin)],
 )
-def process_next(batch: int = 3):
+def process_next(batch: int = 1, embed: bool = False):
     """
-    Visits next `batch` posts in queue, downloads PDF, extracts text, embeds into Pinecone.
-    Call repeatedly until remaining=0. batch=3 keeps each call well under Render's 30s limit.
+    Visits next `batch` posts in queue, downloads PDF, extracts text, saves to DB.
+    embed=false (default): skip Pinecone embedding (fast, ~20-30s per post).
+    embed=true: also embed into Pinecone (slow, ~60-120s per post on free tier).
+    Use /admin/embed-pending after to embed all saved circulars.
     """
     from backend.core.database import SessionLocal
     from scraper.pipeline import ScrapingPipeline
     db = SessionLocal()
     try:
         pipeline = ScrapingPipeline(db_session=db)
-        result = pipeline.process_next(db=db, batch=min(batch, 5))
+        result = pipeline.process_next(db=db, batch=min(batch, 5), embed=embed)
         return result
+    finally:
+        db.close()
+
+
+@router.post(
+    "/admin/embed-pending",
+    summary="Embed next unindexed circular(s) into Pinecone (admin)",
+    dependencies=[Depends(_require_admin)],
+)
+def embed_pending(batch: int = 1):
+    """
+    Embeds next `batch` unindexed circulars from DB into Pinecone.
+    Call repeatedly until all circulars are indexed.
+    Each call takes 30-120s (fastembed + Pinecone upsert).
+    """
+    from backend.core.database import SessionLocal
+    from backend.models.models import Circular
+    from backend.rag_pipeline.embedder import VectorEmbedder
+    db = SessionLocal()
+    try:
+        circulars = (
+            db.query(Circular)
+            .filter(Circular.is_indexed == False, Circular.is_superseded == False)  # noqa: E712
+            .limit(min(batch, 3))
+            .all()
+        )
+        if not circulars:
+            return {"embedded": 0, "message": "All circulars already indexed"}
+        embedder = VectorEmbedder()
+        embedded = 0
+        errors = []
+        for c in circulars:
+            try:
+                count = embedder.embed_circular(c, db=db)
+                embedded += 1
+                logger.info(f"Embedded circular {c.id}: {count} vectors")
+            except Exception as e:
+                errors.append(f"circular {c.id}: {str(e)}")
+                logger.error(f"Embed failed for circular {c.id}: {e}")
+        remaining = (
+            db.query(Circular)
+            .filter(Circular.is_indexed == False, Circular.is_superseded == False)  # noqa: E712
+            .count()
+        )
+        return {"embedded": embedded, "remaining_unindexed": remaining, "errors": errors}
     finally:
         db.close()
 
