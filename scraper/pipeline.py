@@ -147,15 +147,26 @@ class ScrapingPipeline:
 
     def _extract_text_from_bytes(self, pdf_bytes: bytes, pdf_url: str) -> str:
         """
-        Write PDF bytes to a temp file, extract text, delete temp file immediately.
-        Returns extracted text (may be empty on OCR failure).
+        Write PDF bytes to a temp file, extract text (no OCR, no tables),
+        delete temp file immediately. Skips OCR to avoid memory spikes on
+        Render's 512MB free tier (OCR converts pages to ~170MB images each).
         """
         import hashlib
         fname = PDF_TEMP_DIR / f"temp_{hashlib.md5(pdf_url.encode()).hexdigest()[:12]}.pdf"
         fname.write_bytes(pdf_bytes)
         try:
-            result = self.parser.parse(fname)
-            return result.get("text", "")
+            # Try pdfplumber first (fast, light memory)
+            text = self.parser.extract_text(fname)
+            if text and len(text.strip()) > 20:
+                return self.parser.clean_text(text)[:30000]  # cap at 30KB
+
+            # Fallback to PyPDF2 (also light)
+            text = self.parser.extract_with_pypdf2(fname)
+            if text and len(text.strip()) > 20:
+                return self.parser.clean_text(text)[:30000]
+
+            logger.warning(f"No text extracted from PDF (may be scanned image): {pdf_url}")
+            return ""
         finally:
             if fname.exists():
                 fname.unlink()

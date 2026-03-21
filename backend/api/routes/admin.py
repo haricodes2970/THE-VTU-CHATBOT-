@@ -262,7 +262,6 @@ def test_scraper():
     """Fetches page 1 of VTU timetable listings and returns what it finds. No DB writes."""
     try:
         from scraper.vtu_scraper import VTUScraper
-        scraper = VTUScraper()
         import requests
         from bs4 import BeautifulSoup
         resp = requests.get(
@@ -272,7 +271,7 @@ def test_scraper():
         )
         soup = BeautifulSoup(resp.text, "lxml")
         links = soup.select("h2.entry-title a[href]")
-        posts = [{"url": l["href"], "title": l.get_text(strip=True)[:80]} for l in links[:5]]
+        posts = [{"url": a["href"], "title": a.get_text(strip=True)[:80]} for a in links[:5]]
         return {
             "status": "ok",
             "http_status": resp.status_code,
