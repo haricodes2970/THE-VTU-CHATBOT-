@@ -25,10 +25,9 @@ async def lifespan(app: FastAPI):
     """Run startup and shutdown tasks."""
     logger.info(f"Starting {settings.app_name} [{settings.app_env}]")
 
-    # Create all tables (dev only — use Alembic migrations in prod)
-    if settings.is_development:
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables created")
+    # Create all tables if they don't exist (safe — won't drop existing data)
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables ensured")
 
     # Verify DB connection
     if not check_db_connection():
