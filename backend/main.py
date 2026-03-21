@@ -42,14 +42,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Scheduler not started: {e}")
 
-    # Pre-warm embedding model (downloads on first use; do it now, not mid-request)
-    try:
-        from ai.embeddings.embedding_generator import _load_model
-        _load_model()
-        logger.info("Embedding model pre-warmed")
-    except Exception as e:
-        logger.warning(f"Embedding model pre-warm failed (non-fatal): {e}")
-
     logger.info(f"Server ready on port {settings.app_port}")
     yield
 
