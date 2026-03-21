@@ -92,6 +92,7 @@ def embed_pending(batch: int = 1):
     from backend.core.database import SessionLocal
     from backend.models.models import Circular
     from backend.rag_pipeline.embedder import VectorEmbedder
+    from sqlalchemy import text
     db = SessionLocal()
     try:
         circulars = (
@@ -106,24 +107,29 @@ def embed_pending(batch: int = 1):
         embedded = 0
         errors = []
         for c in circulars:
+            cid = c.id
             try:
-                count = embedder.embed_circular(c, db=db)
-                if count == 0:
-                    # No vectors (empty content) — mark indexed to avoid infinite retry
-                    c.is_indexed = True
-                    db.commit()
-                    logger.warning(f"Circular {c.id} has no embeddable content, marking indexed")
+                count = embedder.embed_circular(c, db=None)  # don't let embedder commit
+                # Use raw SQL UPDATE so is_indexed=True is always persisted
+                db.execute(
+                    text("UPDATE circulars SET is_indexed = TRUE WHERE id = :id"),
+                    {"id": cid},
+                )
+                db.commit()
                 embedded += 1
-                logger.info(f"Embedded circular {c.id}: {count} vectors")
+                logger.info(f"Embedded + marked indexed circular {cid}: {count} vectors")
             except Exception as e:
-                errors.append(f"circular {c.id}: {str(e)}")
-                logger.error(f"Embed failed for circular {c.id}: {e}")
-                # Mark as indexed to avoid blocking the queue on repeated failures
-                c.is_indexed = True
+                errors.append(f"circular {cid}: {str(e)}")
+                logger.error(f"Embed failed for circular {cid}: {e}")
+                # Mark as indexed via raw SQL to skip on next run
                 try:
+                    db.execute(
+                        text("UPDATE circulars SET is_indexed = TRUE WHERE id = :id"),
+                        {"id": cid},
+                    )
                     db.commit()
                 except Exception:
-                    pass
+                    db.rollback()
         remaining = (
             db.query(Circular)
             .filter(Circular.is_indexed == False, Circular.is_superseded == False)  # noqa: E712

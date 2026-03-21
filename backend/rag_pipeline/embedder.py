@@ -139,7 +139,11 @@ class VectorEmbedder:
         logger.info(f"Embedded circular {circular.id}: {count} vectors")
 
         if db is not None and count > 0:
-            circular.is_indexed = True
+            from sqlalchemy import text as _text
+            db.execute(
+                _text("UPDATE circulars SET is_indexed = TRUE WHERE id = :id"),
+                {"id": circular.id},
+            )
             db.commit()
             logger.info(f"Marked circular {circular.id} as indexed")
 
