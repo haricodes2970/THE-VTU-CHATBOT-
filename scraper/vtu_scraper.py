@@ -62,13 +62,18 @@ class VTUScraper:
         retry=retry_if_exception_type((requests.ConnectionError, requests.Timeout)),
         reraise=True,
     )
-    def _get(self, url: str) -> requests.Response:
-        """GET with retry + polite random delay (2–4 s)."""
-        time.sleep(random.uniform(2, 4))
+    def _get(self, url: str, delay: float = 2.0) -> requests.Response:
+        """GET with retry + polite delay. delay=0 for single-item processing."""
+        if delay > 0:
+            time.sleep(delay + random.uniform(0, 1))
         logger.info(f"Fetching: {url}")
         response = self.session.get(url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return response
+
+    def _get_fast(self, url: str) -> requests.Response:
+        """GET with no delay — for process_next single-item calls."""
+        return self._get(url, delay=0)
 
     # ── Date parsing ───────────────────────────────────────────────
 
@@ -227,13 +232,15 @@ class VTUScraper:
         post_url: str,
         post_title: str,
         published_date: Optional[datetime],
+        fast: bool = False,
     ) -> Optional[dict]:
         """
         Visit a single post page, extract PDF link + metadata.
         Returns None if no PDF found or post is pre-2022.
+        fast=True skips the polite delay (use for process_next single-item calls).
         """
         try:
-            resp = self._get(post_url)
+            resp = self._get_fast(post_url) if fast else self._get(post_url)
         except Exception as e:
             logger.error(f"Failed to fetch post {post_url}: {e}")
             return None

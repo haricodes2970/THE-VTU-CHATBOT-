@@ -248,7 +248,7 @@ class ScrapingPipeline:
         for post_url in to_process:
             try:
                 # Visit post page and extract metadata
-                metadata = self.scraper.extract_post_metadata(post_url, "", None)
+                metadata = self.scraper.extract_post_metadata(post_url, "", None, fast=True)
                 if not metadata:
                     logger.warning(f"No metadata/PDF found for: {post_url}")
                     processed_posts.add(post_url)
