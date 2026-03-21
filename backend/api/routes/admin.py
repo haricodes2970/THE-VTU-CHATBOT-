@@ -158,6 +158,34 @@ def trigger_scrape(body: TriggerScrapeRequest = TriggerScrapeRequest()):
         db.close()
 
 
+# ── Reset indexed flags ────────────────────────────────────────
+
+@router.post(
+    "/admin/reset-indexed",
+    summary="Reset all circulars to is_indexed=False for re-embedding (admin)",
+    dependencies=[Depends(_require_admin)],
+)
+def reset_indexed():
+    """
+    Sets is_indexed=False on all non-superseded circulars.
+    Use this before running embed-pending to force a clean re-embed of all circulars.
+    """
+    from backend.core.database import SessionLocal
+    from backend.models.models import Circular
+    from sqlalchemy import update
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            update(Circular)
+            .where(Circular.is_superseded == False)  # noqa: E712
+            .values(is_indexed=False)
+        )
+        db.commit()
+        return {"reset": result.rowcount, "message": "All circulars marked for re-embedding"}
+    finally:
+        db.close()
+
+
 # ── Clear state ────────────────────────────────────────────────
 
 @router.post(

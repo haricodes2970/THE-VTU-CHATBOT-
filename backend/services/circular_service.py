@@ -25,7 +25,16 @@ class CircularService:
         ).scalar_one_or_none()
 
         if existing:
-            logger.debug(f"Circular already exists: {circular_data['url']}")
+            # If existing content is poor (short/empty), update with richer content
+            new_content = circular_data.get("content") or ""
+            if new_content and len(new_content) > len(existing.content or ""):
+                existing.content = new_content
+                existing.title = circular_data.get("title", existing.title)[:500]
+                existing.is_indexed = False  # needs re-embedding with new content
+                db.commit()
+                logger.info(f"Updated content for circular: {existing.url[:80]}")
+            else:
+                logger.debug(f"Circular already exists: {circular_data['url']}")
             return existing
 
         circular = Circular(
