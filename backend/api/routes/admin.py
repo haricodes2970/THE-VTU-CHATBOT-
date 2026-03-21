@@ -3,6 +3,7 @@ backend/api/routes/admin.py
 Admin-only endpoints protected by X-Admin-Key header.
 """
 from fastapi import APIRouter, Depends, HTTPException, Header, BackgroundTasks, Request
+from pydantic import BaseModel
 from typing import Optional
 
 from backend.core.config import settings
@@ -13,23 +14,126 @@ router = APIRouter()
 def _require_admin(x_admin_key: Optional[str] = Header(None)):
     """Dependency: validates X-Admin-Key against settings.secret_key."""
     if not x_admin_key or x_admin_key != settings.secret_key:
-        raise HTTPException(status_code=403, detail="Invalid or missing X-Admin-Key header")
+        raise HTTPException(
+            status_code=403, detail="Invalid or missing X-Admin-Key header"
+        )
+
+
+# ── Scraper trigger ────────────────────────────────────────────
+
+class TriggerScrapeRequest(BaseModel):
+    mode: str = "incremental"  # "incremental" | "force_recheck"
 
 
 @router.post(
     "/admin/trigger-scrape",
-    summary="Trigger scraping pipeline immediately (admin)",
+    summary="Trigger timetable scraping pipeline (admin)",
     dependencies=[Depends(_require_admin)],
 )
-def trigger_scrape(background_tasks: BackgroundTasks):
-    from backend.services.scheduler_service import _job_scrape_and_process
-    background_tasks.add_task(_job_scrape_and_process)
-    return {"message": "Scraping pipeline triggered"}
+def trigger_scrape(
+    body: TriggerScrapeRequest = TriggerScrapeRequest(),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+    """
+    incremental  → only process new posts since last run (default, used by scheduler)
+    force_recheck → clears processed_post_urls.json, visits all 2022+ posts again
+                    USE THIS FOR FIRST-TIME FULL SCRAPE
+    """
+    if body.mode not in ("incremental", "force_recheck"):
+        raise HTTPException(
+            status_code=400,
+            detail="mode must be 'incremental' or 'force_recheck'",
+        )
 
+    def _run(mode: str):
+        from backend.core.database import SessionLocal
+        from scraper.pipeline import ScrapingPipeline
+        db = SessionLocal()
+        try:
+            pipeline = ScrapingPipeline(db_session=db)
+            if mode == "force_recheck":
+                result = pipeline.run_force_recheck(db=db)
+            else:
+                result = pipeline.run_incremental(db=db)
+            from loguru import logger
+            logger.info(f"Scrape [{mode}] complete: {result}")
+        finally:
+            db.close()
+
+    background_tasks.add_task(_run, body.mode)
+    return {"status": "started", "mode": body.mode}
+
+
+# ── Clear state ────────────────────────────────────────────────
+
+@router.post(
+    "/admin/clear-state",
+    summary="Delete scraper state files for a fresh rescrape (admin)",
+    dependencies=[Depends(_require_admin)],
+)
+def clear_state():
+    """
+    Deletes seen_circulars.json and processed_post_urls.json.
+    Call this before trigger-scrape with mode=force_recheck.
+    """
+    from scraper.pipeline import ScrapingPipeline
+    cleared = ScrapingPipeline().clear_state()
+    return {"cleared": cleared}
+
+
+# ── Scrape stats ───────────────────────────────────────────────
+
+@router.get(
+    "/admin/scrape-stats",
+    summary="Scraping and indexing stats (admin)",
+    dependencies=[Depends(_require_admin)],
+)
+def scrape_stats():
+    """Returns counts of circulars, vectors, and state file sizes."""
+    from backend.core.database import SessionLocal
+    from backend.services.circular_service import CircularService
+    from backend.rag_pipeline.embedder import VectorEmbedder
+    from scraper.pipeline import ScrapingPipeline, PIPELINE_LOG_FILE, _load_json
+    from sqlalchemy import func, select
+    from backend.models.models import Circular
+
+    db = SessionLocal()
+    try:
+        svc = CircularService()
+        total = db.execute(select(func.count(Circular.id))).scalar() or 0
+        superseded = svc.get_superseded_count(db)
+        active = svc.get_active_timetables_count(db)
+    finally:
+        db.close()
+
+    pinecone_count = 0
+    try:
+        pinecone_count = VectorEmbedder().get_index_stats().get("total_vectors", 0)
+    except Exception:
+        pass
+
+    processed_post_count = ScrapingPipeline().get_processed_count()
+
+    last_run = None
+    log = _load_json(PIPELINE_LOG_FILE, [])
+    if log:
+        last_run = log[-1].get("run_at")
+
+    return {
+        "total_circulars": total,
+        "superseded": superseded,
+        "active_timetables": active,
+        "pinecone_vector_count": pinecone_count,
+        "processed_post_urls": processed_post_count,
+        "last_scrape_run": last_run,
+    }
+
+
+# ── Existing endpoints ─────────────────────────────────────────
 
 @router.post(
     "/admin/reindex-all",
-    summary="Re-embed all circulars into Pinecone (admin)",
+    summary="Re-embed all unindexed circulars into Pinecone (admin)",
     dependencies=[Depends(_require_admin)],
 )
 def reindex_all(background_tasks: BackgroundTasks):

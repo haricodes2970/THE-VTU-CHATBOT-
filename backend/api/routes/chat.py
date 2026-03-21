@@ -6,9 +6,11 @@ import time
 from collections import defaultdict
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.orm import Session
 
+from backend.core.database import get_db
 from backend.services.chat_service import ChatService
 
 router = APIRouter()
@@ -79,12 +81,12 @@ class HistoryResponse(BaseModel):
     summary="Send a message to the VTU chatbot",
     description="Send a natural-language question and receive an AI-generated answer based on VTU circulars.",
 )
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     """Process a user message and return an AI response."""
     session_id = request.session_id or _chat_service.create_session()
     _check_rate_limit(session_id)
 
-    response = _chat_service.chat(session_id, request.message)
+    response = _chat_service.chat(session_id, request.message, db=db)
     return ChatResponseModel(
         answer=response.answer,
         intent=response.intent,

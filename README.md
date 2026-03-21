@@ -269,6 +269,35 @@ THE-VTU-BOT/
 
 ---
 
+## Initial Timetable Scrape (run once after deployment)
+
+After deploying for the first time, trigger a full scrape to index all
+2022+ timetables into Pinecone. This takes 15–30 minutes.
+
+```bash
+# 1. Clear any old state first
+curl -X POST https://your-backend.onrender.com/api/v1/admin/clear-state \
+  -H "X-Admin-Key: your_secret_key"
+
+# 2. Trigger full scrape (visits all posts from 2022 onwards)
+curl -X POST https://your-backend.onrender.com/api/v1/admin/trigger-scrape \
+  -H "X-Admin-Key: your_secret_key" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "force_recheck"}'
+
+# 3. Check progress (call every few minutes)
+curl https://your-backend.onrender.com/api/v1/admin/scrape-stats \
+  -H "X-Admin-Key: your_secret_key"
+```
+
+After the initial scrape completes, the 6-hour scheduler takes over automatically.
+No manual action is needed after that.
+
+> **Note:** The bot will return "I couldn't find that" for exam date questions
+> until the initial scrape is complete, because Pinecone will have no vectors.
+
+---
+
 ## Contributing
 
 1. Fork the repo
