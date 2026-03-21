@@ -58,6 +58,36 @@ class DocumentChunker:
             })
         return base_chunks
 
+    def chunk_timetable(self, text: str, metadata: dict) -> list[dict]:
+        """
+        Special chunking for exam timetable text.
+        Each line containing a date gets its own chunk for precise retrieval.
+        Also adds a full-text chunk for context queries.
+        """
+        import re
+        chunks = []
+        date_pattern = re.compile(r'\d{1,2}/\d{1,2}/\d{4}')
+
+        for line in text.split('\n'):
+            line = line.strip()
+            if not line or len(line) < 5:
+                continue
+            if date_pattern.search(line):
+                chunks.append({
+                    "text": line,
+                    **metadata,
+                    "chunk_type": "exam_entry",
+                })
+
+        # Full-text chunk for broader context queries
+        chunks.append({
+            "text": text[:2000],
+            **metadata,
+            "chunk_type": "full_timetable",
+        })
+
+        return chunks
+
     def chunk_exam_schedule(self, structured_data: list[dict]) -> list[dict]:
         """
         Special chunking for exam schedule rows.

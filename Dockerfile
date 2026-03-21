@@ -3,7 +3,6 @@ FROM python:3.11-slim AS base
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr \
     libpq-dev \
     build-essential \
     curl \

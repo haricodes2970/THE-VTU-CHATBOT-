@@ -133,44 +133,40 @@ class ScrapingPipeline:
         self._db_save("seen_pdfs", data)
 
     # ── PDF download + text extraction ────────────────────────────
+    # NOTE: These methods are deprecated. Use self.parser.extract_from_url(pdf_url) directly.
 
     def _download_pdf(self, pdf_url: str) -> tuple[bytes, str]:
         """
-        Download PDF bytes and return (content, md5_hash).
-        Raises on HTTP error.
+        Deprecated — use self.parser.extract_from_url() instead.
+        Kept as a stub so any external callers don't break immediately.
         """
+        import hashlib
         resp = requests.get(pdf_url, headers=_HTTP_HEADERS, timeout=20)
         resp.raise_for_status()
         content = resp.content
-        pdf_hash = self.scraper.compute_pdf_hash(content)
+        pdf_hash = hashlib.md5(content).hexdigest()
         return content, pdf_hash
 
     def _extract_text_from_bytes(self, pdf_bytes: bytes, pdf_url: str) -> str:
         """
-        Write PDF bytes to a temp file, extract text (no OCR, no tables),
-        delete temp file immediately. Skips OCR to avoid memory spikes on
-        Render's 512MB free tier (OCR converts pages to ~170MB images each).
+        Deprecated — use self.parser.extract_from_url() instead.
+        Kept as a stub so any external callers don't break immediately.
         """
-        import hashlib
-        fname = PDF_TEMP_DIR / f"temp_{hashlib.md5(pdf_url.encode()).hexdigest()[:12]}.pdf"
-        fname.write_bytes(pdf_bytes)
+        import io
+        from pypdf import PdfReader
         try:
-            # Try pdfplumber first (fast, light memory)
-            text = self.parser.extract_text(fname)
-            if text and len(text.strip()) > 20:
-                return self.parser.clean_text(text)[:30000]  # cap at 30KB
-
-            # Fallback to PyPDF2 (also light)
-            text = self.parser.extract_with_pypdf2(fname)
-            if text and len(text.strip()) > 20:
-                return self.parser.clean_text(text)[:30000]
-
-            logger.warning(f"No text extracted from PDF (may be scanned image): {pdf_url}")
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            pages = []
+            for page in reader.pages:
+                try:
+                    pages.append(page.extract_text() or "")
+                except Exception:
+                    pages.append("")
+            text = "\n".join(pages)
+            return self.parser.clean_text(text)[:30000] if text.strip() else ""
+        except Exception as e:
+            logger.warning(f"_extract_text_from_bytes failed for {pdf_url}: {e}")
             return ""
-        finally:
-            if fname.exists():
-                fname.unlink()
-                logger.debug(f"Deleted temp PDF: {fname.name}")
 
     # ── DB helpers ─────────────────────────────────────────────────
 
@@ -351,8 +347,16 @@ class ScrapingPipeline:
                     )
                     is_revised = old_circular is not None
                 else:
-                    # Full mode: download and parse PDF
-                    pdf_bytes, pdf_hash = self._download_pdf(pdf_url)
+                    # Full mode: download and parse PDF (memory-efficient via pypdf)
+                    result = self.parser.extract_from_url(pdf_url)
+                    if not result["success"]:
+                        logger.warning(f"PDF extraction failed for {pdf_url}: {result['error']}")
+                        processed_posts.add(post_url)
+                        skipped_count += 1
+                        continue
+
+                    content = result["text"]
+                    pdf_hash = result["pdf_hash"]
 
                     existing_hash = seen_pdfs.get(pdf_url)
                     if existing_hash == pdf_hash:
@@ -367,9 +371,6 @@ class ScrapingPipeline:
                         metadata["semester_range"],
                     )
                     is_revised = old_circular is not None
-
-                    content = self._extract_text_from_bytes(pdf_bytes, pdf_url)
-                    pdf_bytes = None
 
                 circular_data = {
                     "title": metadata["title"],
@@ -460,8 +461,16 @@ class ScrapingPipeline:
             post_url = timetable["post_url"]
             pdf_url = timetable["pdf_url"]
             try:
-                # a) Download PDF
-                pdf_bytes, pdf_hash = self._download_pdf(pdf_url)
+                # a) Download PDF and extract text (memory-efficient via pypdf)
+                result = self.parser.extract_from_url(pdf_url)
+                if not result["success"]:
+                    logger.warning(f"PDF extraction failed for {pdf_url}: {result['error']}")
+                    processed_posts.add(post_url)
+                    skipped_count += 1
+                    continue
+
+                text = result["text"]
+                pdf_hash = result["pdf_hash"]
 
                 # b) Skip if PDF content unchanged
                 existing_hash = seen_pdfs.get(pdf_url)
@@ -478,10 +487,6 @@ class ScrapingPipeline:
                     timetable["semester_range"],
                 )
                 is_revised = old_circular is not None
-
-                # d) Extract text from PDF, delete temp file immediately
-                text = self._extract_text_from_bytes(pdf_bytes, pdf_url)
-                pdf_bytes = None  # free memory
 
                 # e) Save circular metadata to DB
                 circular_data = {
