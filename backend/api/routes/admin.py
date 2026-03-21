@@ -47,20 +47,20 @@ def discover_posts(force: bool = False, start_page: int = 1, max_pages: int = 5)
 
 @router.post(
     "/admin/process-next",
-    summary="Phase 2: Process next post from queue (admin)",
+    summary="Phase 2: Process next post(s) from queue (admin)",
     dependencies=[Depends(_require_admin)],
 )
-def process_next():
+def process_next(batch: int = 3):
     """
-    Visits next post in queue, downloads PDF, extracts text, embeds into Pinecone.
-    Call repeatedly until remaining=0. Each call takes 10-30s.
+    Visits next `batch` posts in queue, downloads PDF, extracts text, embeds into Pinecone.
+    Call repeatedly until remaining=0. batch=3 keeps each call well under Render's 30s limit.
     """
     from backend.core.database import SessionLocal
     from scraper.pipeline import ScrapingPipeline
     db = SessionLocal()
     try:
         pipeline = ScrapingPipeline(db_session=db)
-        result = pipeline.process_next(db=db, batch=1)
+        result = pipeline.process_next(db=db, batch=min(batch, 5))
         return result
     finally:
         db.close()

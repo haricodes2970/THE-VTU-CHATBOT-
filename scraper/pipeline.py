@@ -318,6 +318,8 @@ class ScrapingPipeline:
             except Exception as e:
                 logger.error(f"process_next error for {post_url}: {e}")
                 errors.append(f"{post_url}: {str(e)}")
+                # Mark as processed so it doesn't re-enter the queue on next discover
+                processed_posts.add(post_url)
 
         # Save state
         self._save_pending_posts(remaining)

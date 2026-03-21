@@ -273,7 +273,7 @@ class VTUScraper:
 
         for a in search_scope.find_all("a", href=True):
             href = a["href"].strip()
-            if href.lower().endswith(".pdf") or "wp-content/uploads" in href:
+            if href.lower().endswith(".pdf"):
                 pdf_url = href
                 break
 
