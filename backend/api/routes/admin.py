@@ -173,6 +173,36 @@ def scrape_stats():
     }
 
 
+# ── Debug: ScrapeState table contents ────────────────────────
+
+@router.get(
+    "/admin/debug-state",
+    summary="Show raw ScrapeState DB table contents (admin)",
+    dependencies=[Depends(_require_admin)],
+)
+def debug_state():
+    """Returns what is actually stored in the scrape_state DB table."""
+    from backend.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        from backend.models.models import ScrapeState
+        rows = db.query(ScrapeState).all()
+        result = {}
+        for row in rows:
+            import json as _json
+            try:
+                data = _json.loads(row.data)
+                count = len(data) if isinstance(data, (list, dict)) else "n/a"
+            except Exception:
+                count = "parse_error"
+            result[row.key] = {"count": count, "updated_at": str(row.updated_at)}
+        return {"table_exists": True, "rows": result}
+    except Exception as e:
+        return {"table_exists": False, "error": str(e)}
+    finally:
+        db.close()
+
+
 # ── Debug scraper test ────────────────────────────────────────
 
 @router.get(
