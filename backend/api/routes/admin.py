@@ -38,11 +38,17 @@ def discover_posts(force: bool = False, start_page: int = 1, max_pages: int = 5)
       POST /admin/discover?force=true&start_page=1&max_pages=5
       POST /admin/discover&start_page=6&max_pages=5
     force=true clears processed history and re-discovers all 2022+ posts.
+    State is stored in the DB (survives redeploys).
     """
+    from backend.core.database import SessionLocal
     from scraper.pipeline import ScrapingPipeline
-    pipeline = ScrapingPipeline()
-    result = pipeline.discover(force=force, start_page=start_page, max_pages=max_pages)
-    return result
+    db = SessionLocal()
+    try:
+        pipeline = ScrapingPipeline(db_session=db)
+        result = pipeline.discover(force=force, start_page=start_page, max_pages=max_pages)
+        return result
+    finally:
+        db.close()
 
 
 @router.post(
@@ -79,10 +85,15 @@ def trigger_scrape(body: TriggerScrapeRequest = TriggerScrapeRequest()):
     if body.mode not in ("incremental", "force_recheck"):
         raise HTTPException(status_code=400, detail="mode must be 'incremental' or 'force_recheck'")
 
+    from backend.core.database import SessionLocal
     from scraper.pipeline import ScrapingPipeline
-    pipeline = ScrapingPipeline()
-    result = pipeline.discover(force=(body.mode == "force_recheck"))
-    return {"status": "discovered", "mode": body.mode, "result": result}
+    db = SessionLocal()
+    try:
+        pipeline = ScrapingPipeline(db_session=db)
+        result = pipeline.discover(force=(body.mode == "force_recheck"))
+        return {"status": "discovered", "mode": body.mode, "result": result}
+    finally:
+        db.close()
 
 
 # ── Clear state ────────────────────────────────────────────────
@@ -94,12 +105,17 @@ def trigger_scrape(body: TriggerScrapeRequest = TriggerScrapeRequest()):
 )
 def clear_state():
     """
-    Deletes seen_circulars.json and processed_post_urls.json.
-    Call this before trigger-scrape with mode=force_recheck.
+    Clears scrape state (pending queue, processed URLs, seen PDFs) from DB + JSON files.
+    Call this before discover with force=true to start fresh.
     """
+    from backend.core.database import SessionLocal
     from scraper.pipeline import ScrapingPipeline
-    cleared = ScrapingPipeline().clear_state()
-    return {"cleared": cleared}
+    db = SessionLocal()
+    try:
+        cleared = ScrapingPipeline(db_session=db).clear_state()
+        return {"cleared": cleared}
+    finally:
+        db.close()
 
 
 # ── Scrape stats ───────────────────────────────────────────────
@@ -133,9 +149,13 @@ def scrape_stats():
     except Exception:
         pass
 
-    pipeline_inst = ScrapingPipeline()
-    processed_post_count = pipeline_inst.get_processed_count()
-    pending_post_count = pipeline_inst.get_pending_count()
+    db2 = SessionLocal()
+    try:
+        pipeline_inst = ScrapingPipeline(db_session=db2)
+        processed_post_count = pipeline_inst.get_processed_count()
+        pending_post_count = pipeline_inst.get_pending_count()
+    finally:
+        db2.close()
 
     last_run = None
     log = _load_json(PIPELINE_LOG_FILE, [])

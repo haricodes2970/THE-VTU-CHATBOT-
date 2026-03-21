@@ -65,29 +65,72 @@ class ScrapingPipeline:
         PDF_TEMP_DIR.mkdir(parents=True, exist_ok=True)
         PROCESSED_POSTS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    # ── State I/O ─────────────────────────────────────────────────
+    # ── State I/O (DB-primary, JSON-fallback) ─────────────────────
+
+    def _db_load(self, key: str, default):
+        """Load state from DB scrape_state table, fallback to JSON file."""
+        if self.db is not None:
+            try:
+                from backend.models.models import ScrapeState
+                row = self.db.query(ScrapeState).filter(ScrapeState.key == key).first()
+                if row:
+                    return json.loads(row.data)
+            except Exception as e:
+                logger.warning(f"DB state load failed for '{key}': {e}")
+        # JSON fallback (local dev / first boot)
+        file_map = {
+            "pending": PENDING_POSTS_FILE,
+            "processed": PROCESSED_POSTS_FILE,
+            "seen_pdfs": SEEN_PDFS_FILE,
+        }
+        return _load_json(file_map.get(key, Path(f"data/raw/{key}.json")), default)
+
+    def _db_save(self, key: str, data) -> None:
+        """Save state to DB scrape_state table, fallback to JSON file."""
+        serialized = json.dumps(data, default=str)
+        if self.db is not None:
+            try:
+                from backend.models.models import ScrapeState
+                from datetime import datetime as _dt
+                row = self.db.query(ScrapeState).filter(ScrapeState.key == key).first()
+                if row:
+                    row.data = serialized
+                    row.updated_at = _dt.utcnow()
+                else:
+                    self.db.add(ScrapeState(key=key, data=serialized, updated_at=_dt.utcnow()))
+                self.db.commit()
+                return
+            except Exception as e:
+                logger.warning(f"DB state save failed for '{key}': {e}")
+        # JSON fallback
+        file_map = {
+            "pending": PENDING_POSTS_FILE,
+            "processed": PROCESSED_POSTS_FILE,
+            "seen_pdfs": SEEN_PDFS_FILE,
+        }
+        _save_json(file_map.get(key, Path(f"data/raw/{key}.json")), data)
 
     def _load_pending_posts(self) -> list[str]:
-        return _load_json(PENDING_POSTS_FILE, [])
+        return self._db_load("pending", [])
 
     def _save_pending_posts(self, urls: list[str]) -> None:
-        _save_json(PENDING_POSTS_FILE, urls)
+        self._db_save("pending", urls)
 
     def get_pending_count(self) -> int:
         return len(self._load_pending_posts())
 
     def _load_processed_posts(self) -> set[str]:
-        return set(_load_json(PROCESSED_POSTS_FILE, []))
+        return set(self._db_load("processed", []))
 
     def _save_processed_posts(self, urls: set[str]) -> None:
-        _save_json(PROCESSED_POSTS_FILE, sorted(urls))
+        self._db_save("processed", sorted(urls))
 
     def _load_seen_pdfs(self) -> dict[str, str]:
         """Returns {pdf_url: md5_hash}."""
-        return _load_json(SEEN_PDFS_FILE, {})
+        return self._db_load("seen_pdfs", {})
 
     def _save_seen_pdfs(self, data: dict) -> None:
-        _save_json(SEEN_PDFS_FILE, data)
+        self._db_save("seen_pdfs", data)
 
     # ── PDF download + text extraction ────────────────────────────
 
@@ -96,7 +139,7 @@ class ScrapingPipeline:
         Download PDF bytes and return (content, md5_hash).
         Raises on HTTP error.
         """
-        resp = requests.get(pdf_url, headers=_HTTP_HEADERS, timeout=60)
+        resp = requests.get(pdf_url, headers=_HTTP_HEADERS, timeout=25)
         resp.raise_for_status()
         content = resp.content
         pdf_hash = self.scraper.compute_pdf_hash(content)
@@ -473,9 +516,21 @@ class ScrapingPipeline:
         return self.run_incremental(db=db, batch_size=batch_size)
 
     def clear_state(self) -> list[str]:
-        """Delete both state files. Call before a full fresh rescrape."""
+        """Clear state from DB and JSON files. Call before a full fresh rescrape."""
         cleared = []
-        for f in [SEEN_PDFS_FILE, PROCESSED_POSTS_FILE]:
+        # Clear DB state
+        if self.db is not None:
+            try:
+                from backend.models.models import ScrapeState
+                deleted = self.db.query(ScrapeState).delete()
+                self.db.commit()
+                if deleted:
+                    cleared.append(f"db_scrape_state ({deleted} rows)")
+                    logger.info(f"Cleared {deleted} rows from scrape_state table")
+            except Exception as e:
+                logger.warning(f"DB clear_state failed: {e}")
+        # Also delete JSON files
+        for f in [SEEN_PDFS_FILE, PROCESSED_POSTS_FILE, PENDING_POSTS_FILE]:
             if f.exists():
                 f.unlink()
                 cleared.append(f.name)

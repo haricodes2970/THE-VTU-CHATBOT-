@@ -144,3 +144,25 @@ class Notification(Base):
 
     def __repr__(self) -> str:
         return f"<Notification user={self.user_id} status={self.status}>"
+
+
+# ── Scrape state (survives Render redeploys) ──────────────────
+class ScrapeState(Base):
+    """
+    Key-value store for scraping pipeline state.
+    Replaces ephemeral JSON files (pending_posts.json, processed_post_urls.json,
+    seen_circulars.json) which are wiped on every Render redeploy.
+
+    Keys used:
+      "pending"   → JSON list of post URLs waiting to be processed
+      "processed" → JSON list of post URLs already processed (or failed)
+      "seen_pdfs" → JSON dict of {pdf_url: md5_hash} for change detection
+    """
+    __tablename__ = "scrape_state"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    data: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<ScrapeState key={self.key}>"
