@@ -143,36 +143,45 @@ class ResponseGenerator:
         if answer != "NOT_FOUND":
             return answer
 
+        # NOT_FOUND — if we have retrieved chunks, show their PDF links directly
+        if context_chunks:
+            seen = set()
+            lines = ["Here are the closest VTU timetables I found:\n"]
+            for chunk in context_chunks:
+                meta = chunk.get("metadata", {})
+                title = meta.get("title", "VTU Timetable")
+                scheme = meta.get("scheme", "")
+                session = meta.get("exam_session", "")
+                semester = meta.get("semester_range", "")
+                pdf = meta.get("pdf_url", "") or meta.get("source_url", "")
+                if not pdf or pdf in seen:
+                    continue
+                seen.add(pdf)
+                label = title
+                if scheme:
+                    label += f" | Scheme: {scheme}"
+                if semester:
+                    label += f" | Sem: {semester}"
+                if session:
+                    label += f" | {session}"
+                lines.append(f"📎 {label}\n{pdf}\n")
+            if len(lines) > 1:
+                lines.append("⚠️ Verify dates at vtu.ac.in before your exam.")
+                return "\n".join(lines)
+
+        # No chunks — ask for details or show generic fallback
         entities = session_entities or {}
         has_context = bool(
             entities.get("semester")
             or entities.get("scheme")
             or entities.get("course_type")
         )
-
         if not has_context:
-            logger.info("NOT_FOUND with no session context — asking for details")
             return _ASK_FOR_DETAILS
 
-        # User already gave context but still not found — show fallback PDF
         if fallback_pdf_url:
             scheme = entities.get("scheme", "2021")
-            logger.info(f"NOT_FOUND with context — showing fallback PDF: {fallback_pdf_url}")
-            return _FALLBACK_WITH_PDF.format(
-                scheme=scheme, pdf_url=fallback_pdf_url
-            )
-
-        # Try to fetch PDF URL from DB as last resort
-        if db is not None:
-            from backend.rag_pipeline.retriever import ContextRetriever
-            pdf_url = ContextRetriever().get_latest_timetable_pdf_url(
-                scheme=entities.get("scheme"),
-                course_type=entities.get("course_type"),
-                db=db,
-            )
-            if pdf_url:
-                scheme = entities.get("scheme", "2021")
-                return _FALLBACK_WITH_PDF.format(scheme=scheme, pdf_url=pdf_url)
+            return _FALLBACK_WITH_PDF.format(scheme=scheme, pdf_url=fallback_pdf_url)
 
         return _FALLBACK_NO_PDF
 
