@@ -396,8 +396,9 @@ def fix_metadata():
 
         for c in circulars:
             title = c.title or ""
-            # If title is the old generic fallback, try the PDF filename instead
-            if not title or title.lower() in ("vtu timetable", "vtu"):
+            # If title is a generic fallback, try the PDF filename instead
+            _generic = {"vtu timetable", "vtu", "circular", "timetable", "time table", "notification", ""}
+            if not title or title.lower().strip() in _generic:
                 import os as _os
                 filename = _os.path.basename(c.url or "").replace(".pdf", "").replace("-", "_")
                 title = filename or title

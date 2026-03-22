@@ -267,19 +267,25 @@ class VTUScraper:
             return None
 
         if not post_title:
-            # Try multiple selectors — VTU WordPress theme varies
+            # Generic h1 labels VTU uses that are not useful as titles
+            _GENERIC = {"circular", "timetable", "time table", "vtu", "home", "notification", ""}
             h1 = (
                 soup.find("h1", class_=re.compile(r"entry-title|post-title", re.I))
                 or soup.find("h1")
             )
-            if h1:
-                post_title = h1.get_text(strip=True)
+            h1_text = h1.get_text(strip=True) if h1 else ""
+            if h1_text and h1_text.lower() not in _GENERIC:
+                post_title = h1_text
             else:
                 # Fall back to <title> tag (WordPress: "Post Title – Site Name")
                 title_tag = soup.find("title")
                 if title_tag:
                     raw = title_tag.get_text(strip=True)
-                    post_title = raw.split("–")[0].split("|")[0].strip()
+                    # Split on em-dash/en-dash/pipe, take the longest meaningful part
+                    parts = [p.strip() for p in re.split(r'\s*[–—|]\s*', raw) if p.strip()]
+                    # Filter out site-name parts ("VTU", short parts)
+                    useful = [p for p in parts if len(p) > 5 and p.lower() not in _GENERIC]
+                    post_title = max(useful, key=len) if useful else (parts[0] if parts else "")
                 else:
                     post_title = ""
 
