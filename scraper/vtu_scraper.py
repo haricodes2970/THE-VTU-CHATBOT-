@@ -337,10 +337,13 @@ class VTUScraper:
     # ── Metadata extraction helpers ───────────────────────────────
 
     def detect_scheme(self, title: str) -> str:
-        """Detect VTU scheme from post title."""
+        """Detect VTU scheme from post title. Never matches standalone exam session years."""
         import re
-        # 1. Explicit "XXXX Scheme" pattern — avoids picking up exam session years
-        m = re.search(r'\b(2015|2017|2018|2021|2022|2023)\s*[Ss]cheme\b', title)
+        # 1. Year adjacent to "scheme" keyword: "2021 Scheme" or "Scheme 2022"
+        m = re.search(r'(2015|2017|2018|2021|2022|2023)\s*scheme', title, re.IGNORECASE)
+        if m:
+            return m.group(1)
+        m = re.search(r'scheme\s*[:\-]?\s*(2015|2017|2018|2021|2022|2023)', title, re.IGNORECASE)
         if m:
             return m.group(1)
         # 2. "Scheme B" / "Scheme A" = CBCS/2018
@@ -349,13 +352,13 @@ class VTUScraper:
         # 3. CBCS → 2018
         if re.search(r'\bCBCS\b', title, re.IGNORECASE):
             return "2018"
-        # 3. PG programmes
+        # 4. PG programmes
         if re.search(r'(?<![A-Za-z])M\.?Tech\.?(?![A-Za-z])|(?<![A-Za-z])MBA(?![A-Za-z])|(?<![A-Za-z])MCA(?![A-Za-z])|(?<![A-Za-z])P\.?G\.?(?![A-Za-z])|(?<![A-Za-z])PGCISM(?![A-Za-z])', title, re.IGNORECASE):
             return "PG"
-        # 4. PhD
+        # 5. PhD
         if re.search(r'\bPh\.?D\.?\b', title, re.IGNORECASE):
             return "PhD"
-        # 5. Default
+        # 6. Default — do NOT match standalone 2024/2025 exam years as scheme
         return "2021"
 
     def detect_course_type(self, title: str) -> str:
