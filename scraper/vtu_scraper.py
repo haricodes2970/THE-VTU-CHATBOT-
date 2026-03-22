@@ -339,11 +339,14 @@ class VTUScraper:
     def detect_scheme(self, title: str) -> str:
         """Detect VTU scheme from post title."""
         import re
-        # 1. Explicit year pattern (most reliable)
-        m = re.search(r'\b(2015|2017|2018|2021|2022|2023|2024|2025)\b', title)
+        # 1. Explicit "XXXX Scheme" pattern — avoids picking up exam session years
+        m = re.search(r'\b(2015|2017|2018|2021|2022|2023)\s*[Ss]cheme\b', title)
         if m:
             return m.group(1)
-        # 2. CBCS → 2018
+        # 2. "Scheme B" / "Scheme A" = CBCS/2018
+        if re.search(r'\bScheme\s+[AB]\b', title, re.IGNORECASE):
+            return "2018"
+        # 3. CBCS → 2018
         if re.search(r'\bCBCS\b', title, re.IGNORECASE):
             return "2018"
         # 3. PG programmes
@@ -440,9 +443,10 @@ class VTUScraper:
         def roman_to_int(r: str) -> int:
             return ROMAN.get(r.upper(), 0)
 
-        # Step 1 — Roman pair with slash: "III/IV Sem"
+        # Step 1 — Roman pair with slash + optional Sem: "III/IV Sem" or "III / IV"
         m = re.search(
-            r'\b(VIII|VII|VI|IV|V|III|II|I|IX|X)\s*/\s*(VIII|VII|VI|IV|V|III|II|I|IX|X)\s*[Ss]em',
+            r'\b(VIII|VII|VI|IV|V|III|II|I|IX|X)\s*/\s*(VIII|VII|VI|IV|V|III|II|I|IX|X)'
+            r'(?:\s*[Ss]em)?',
             title
         )
         if m:
@@ -452,7 +456,8 @@ class VTUScraper:
 
         # Step 2 — "X and Y Semester"
         m = re.search(
-            r'\b(VIII|VII|VI|IV|V|III|II|I|IX|X)\s+and\s+(VIII|VII|VI|IV|V|III|II|I|IX|X)\s*[Ss]em',
+            r'\b(VIII|VII|VI|IV|V|III|II|I|IX|X)\s+and\s+(VIII|VII|VI|IV|V|III|II|I|IX|X)'
+            r'(?:\s*[Ss]em)?',
             title, re.IGNORECASE
         )
         if m:
