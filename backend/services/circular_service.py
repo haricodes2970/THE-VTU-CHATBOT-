@@ -25,16 +25,32 @@ class CircularService:
         ).scalar_one_or_none()
 
         if existing:
-            # If existing content is poor (short/empty), update with richer content
+            # Always update metadata fields (scheme/session/semester may have been corrected)
             new_content = circular_data.get("content") or ""
+            updated = False
+            if circular_data.get("scheme"):
+                existing.scheme = circular_data["scheme"]
+                updated = True
+            if circular_data.get("exam_session"):
+                existing.exam_session = circular_data["exam_session"]
+                updated = True
+            if circular_data.get("semester_range"):
+                existing.semester_range = circular_data["semester_range"]
+                updated = True
+            if circular_data.get("course_type"):
+                existing.course_type = circular_data["course_type"]
+                updated = True
+            # Update content+title only if new content is richer
             if new_content and len(new_content) > len(existing.content or ""):
                 existing.content = new_content
                 existing.title = circular_data.get("title", existing.title)[:500]
                 existing.is_indexed = False  # needs re-embedding with new content
+                updated = True
+            if updated:
                 db.commit()
-                logger.info(f"Updated content for circular: {existing.url[:80]}")
+                logger.info(f"Updated circular: {existing.url[:80]}")
             else:
-                logger.debug(f"Circular already exists: {circular_data['url']}")
+                logger.debug(f"Circular already exists (no update): {circular_data['url']}")
             return existing
 
         circular = Circular(
