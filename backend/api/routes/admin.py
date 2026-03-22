@@ -374,3 +374,50 @@ def retry_notifications():
     from backend.services.scheduler_service import _job_retry_notifications
     _job_retry_notifications()
     return {"message": "Retry notifications complete"}
+
+
+@router.post("/admin/fix-metadata", summary="Re-extract metadata for all circulars")
+def fix_metadata():
+    """Re-runs detect_scheme, extract_semester_range, extract_exam_session on all circulars."""
+    from scraper.vtu_scraper import VTUScraper
+    from collections import defaultdict
+    from sqlalchemy import text
+    from backend.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        scraper_instance = VTUScraper.__new__(VTUScraper)
+        circulars = db.execute(text("SELECT id, title FROM circulars")).fetchall()
+
+        fixed = 0
+        unknown_session_count = 0
+        schemes: dict = defaultdict(int)
+        semesters: dict = defaultdict(int)
+
+        for c in circulars:
+            title = c.title or ""
+            new_scheme = scraper_instance.detect_scheme(title)
+            new_sem = scraper_instance.extract_semester_range(title)
+            new_session = scraper_instance.extract_exam_session(title)
+
+            db.execute(
+                text("UPDATE circulars SET scheme=:scheme, semester_range=:sem, exam_session=:session, is_indexed=false WHERE id=:id"),
+                {"scheme": new_scheme, "sem": new_sem, "session": new_session, "id": c.id}
+            )
+            schemes[new_scheme] += 1
+            semesters[new_sem] += 1
+            if new_session == "UnknownSession":
+                unknown_session_count += 1
+            fixed += 1
+
+        db.commit()
+        logger.info(f"fix-metadata: updated {fixed} circulars")
+
+        return {
+            "fixed": fixed,
+            "still_unknown_session": unknown_session_count,
+            "schemes_found": dict(schemes),
+            "semesters_found": dict(semesters),
+        }
+    finally:
+        db.close()

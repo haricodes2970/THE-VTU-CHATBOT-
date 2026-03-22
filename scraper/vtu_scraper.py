@@ -331,18 +331,22 @@ class VTUScraper:
     # ── Metadata extraction helpers ───────────────────────────────
 
     def detect_scheme(self, title: str) -> str:
-        """Detect curriculum scheme from title string."""
-        t = title.lower()
-        if "2022 scheme" in t or "2022scheme" in t:
-            return "2022"
-        if "2021 scheme" in t or "2021scheme" in t or "(2021" in t:
-            return "2021"
-        if "2018 scheme" in t or "cbcs" in t or "2015" in t:
+        """Detect VTU scheme from post title."""
+        import re
+        # 1. Explicit year pattern (most reliable)
+        m = re.search(r'\b(2015|2017|2018|2021|2022|2023|2024|2025)\b', title)
+        if m:
+            return m.group(1)
+        # 2. CBCS → 2018
+        if re.search(r'\bCBCS\b', title, re.IGNORECASE):
             return "2018"
-        if any(x in t for x in ["m.tech", "mtech", "mba", "mca", "p.g", " pg "]):
+        # 3. PG programmes
+        if re.search(r'(?<![A-Za-z])M\.?Tech\.?(?![A-Za-z])|(?<![A-Za-z])MBA(?![A-Za-z])|(?<![A-Za-z])MCA(?![A-Za-z])|(?<![A-Za-z])P\.?G\.?(?![A-Za-z])|(?<![A-Za-z])PGCISM(?![A-Za-z])', title, re.IGNORECASE):
             return "PG"
-        if "ph.d" in t or "phd" in t:
+        # 4. PhD
+        if re.search(r'\bPh\.?D\.?\b', title, re.IGNORECASE):
             return "PhD"
+        # 5. Default
         return "2021"
 
     def detect_course_type(self, title: str) -> str:
@@ -363,81 +367,120 @@ class VTUScraper:
         return "BE/BTech"
 
     def extract_exam_session(self, title: str) -> str:
-        """
-        Normalize exam session from title for deduplication.
-          "Dec 2025/Jan 2026"        → "Dec2025_3_4sem" (if sem in title)
-          "June/July 2024"           → "JunJul2024"
-          "Jan/Feb 2023"             → "JanFeb2023"
-        """
-        pattern = re.compile(
-            rf"({_MONTH_PATTERN})"
-            r"[\s./]*"
-            rf"(?:({_MONTH_PATTERN})[\s./]*)?"
-            r"(\d{{4}})",
-            re.IGNORECASE,
-        )
-        m = pattern.search(title)
-        if m:
-            key1 = m.group(1).lower()[:3].capitalize()
-            m1 = _MONTH_MAP.get(key1, key1)
-            m2 = ""
-            if m.group(2):
-                key2 = m.group(2).lower()[:3].capitalize()
-                m2 = _MONTH_MAP.get(key2, key2)
-            year = m.group(3)
-            sem_range = self.extract_semester_range(title)
-            sem_suffix = (
-                f"_{sem_range.replace('/', '_')}sem" if sem_range != "all" else ""
-            )
-            return f"{m1}{m2}{year}{sem_suffix}"
+        """Extract exam session from VTU post title."""
+        import re
 
-        year_m = re.search(r"20\d{2}", title)
-        if year_m:
-            return f"Unknown{year_m.group()}"
+        MONTH_ABBR = {
+            "january": "Jan", "february": "Feb", "march": "Mar",
+            "april": "Apr", "may": "May", "june": "Jun",
+            "july": "Jul", "august": "Aug", "september": "Sep",
+            "october": "Oct", "november": "Nov", "december": "Dec",
+            "jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr",
+            "jun": "Jun", "jul": "Jul", "aug": "Aug", "sep": "Sep",
+            "oct": "Oct", "nov": "Nov", "dec": "Dec",
+        }
+
+        ABBR_MAP = {
+            "JJ": "Jun", "DJ": "Dec", "JF": "Jan",
+            "ND": "Nov", "MJ": "Mar", "AM": "Apr",
+        }
+
+        def expand_year(y: str) -> str:
+            if len(y) == 2:
+                return "20" + y
+            return y
+
+        # Step 1 — Month name pattern: "Dec 2025", "June/July 2024", "Jan/Feb 2023"
+        m = re.search(
+            r'(?<![A-Za-z])(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
+            r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|'
+            r'Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+            r'[a-z]*'
+            r'(?:[\s/]+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
+            r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|'
+            r'Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*)?'
+            r'[\s/_]*(\d{4}|\d{2})(?![0-9])',
+            title, re.IGNORECASE
+        )
+        if m:
+            month_raw = m.group(1)[:3].capitalize()
+            abbr = MONTH_ABBR.get(month_raw.lower(), month_raw)
+            year = expand_year(m.group(2))
+            return f"{abbr}{year}"
+
+        # Step 2 — Filename abbreviation: "JJ25", "DJ25", "JF23", "ND23"
+        m = re.search(r'(?<![A-Za-z])(JJ|DJ|JF|ND|MJ|AM)(\d{2})(?![0-9])', title)
+        if m:
+            abbr = ABBR_MAP.get(m.group(1), "Jan")
+            year = expand_year(m.group(2))
+            return f"{abbr}{year}"
+
+        # Step 3 — Underscore date: "Dec25_Jan26", "D25J26"
+        m = re.search(r'\b(Dec|Jan|Jun|Nov|Mar|Apr)(\d{2})(?:_|/)(?:Jan|Feb|Jul|Jun)\d{2}', title, re.IGNORECASE)
+        if m:
+            abbr = m.group(1).capitalize()
+            year = expand_year(m.group(2))
+            return f"{abbr}{year}"
+
         return "UnknownSession"
 
     def extract_semester_range(self, title: str) -> str:
-        """
-        Extract semester range from title.
-          "III/IV Semester" → "3/4"
-          "I/II"            → "1/2"
-          "V/VI"            → "5/6"
-          "VII/VIII"        → "7/8"
-          "I Semester"      → "1"
-          default           → "all"
-        """
-        t = title.lower()
+        """Extract semester range from VTU post title."""
+        import re
 
-        # Roman numeral pair: III/IV, V/VI, etc.
+        ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5,
+                 "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
+
+        def roman_to_int(r: str) -> int:
+            return ROMAN.get(r.upper(), 0)
+
+        # Step 1 — Roman pair with slash: "III/IV Sem"
         m = re.search(
-            r"\b(viii|vii|vi|iv|v|iii|ii|i)\s*/\s*(viii|vii|vi|iv|v|iii|ii|i)\b",
-            t,
-            re.IGNORECASE,
+            r'\b(VIII|VII|VI|IV|V|III|II|I|IX|X)\s*/\s*(VIII|VII|VI|IV|V|III|II|I|IX|X)\s*[Ss]em',
+            title
         )
         if m:
-            a = _ROMAN.get(m.group(1).lower())
-            b = _ROMAN.get(m.group(2).lower())
+            a, b = roman_to_int(m.group(1)), roman_to_int(m.group(2))
             if a and b:
                 return f"{a}/{b}"
 
-        # Arabic digit pair: 3/4 sem
-        m = re.search(r"\b([1-8])\s*/\s*([1-8])\s*sem", t)
+        # Step 2 — "X and Y Semester"
+        m = re.search(
+            r'\b(VIII|VII|VI|IV|V|III|II|I|IX|X)\s+and\s+(VIII|VII|VI|IV|V|III|II|I|IX|X)\s*[Ss]em',
+            title, re.IGNORECASE
+        )
+        if m:
+            a, b = roman_to_int(m.group(1)), roman_to_int(m.group(2))
+            if a and b:
+                return f"{a}/{b}"
+
+        # Step 3 — Digit pair with slash: "3/4 Sem"
+        m = re.search(r'\b(\d)\s*/\s*(\d)\s*[Ss]em', title)
         if m:
             return f"{m.group(1)}/{m.group(2)}"
 
-        # Single roman numeral semester
+        # Step 4 — Underscore filename pattern: "_3_4SEM"
+        m = re.search(r'_(\d)_(\d)[Ss][Ee][Mm]', title)
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+
+        # Step 5 — Single Roman numeral semester
         m = re.search(
-            r"\b(viii|vii|vi|iv|v|iii|ii|i)\s+sem(?:ester)?",
-            t,
-            re.IGNORECASE,
+            r'\b(VIII|VII|VI|IV|V|III|II|I|IX|X)\s+[Ss]em',
+            title
         )
         if m:
-            n = _ROMAN.get(m.group(1).lower())
+            n = roman_to_int(m.group(1))
             if n:
                 return str(n)
 
-        # Single arabic semester
-        m = re.search(r"\b([1-8])\s*(?:st|nd|rd|th)?\s*sem(?:ester)?", t)
+        # Step 6 — Ordinal digit: "6th Semester", "5th sem"
+        m = re.search(r'\b(\d+)(?:st|nd|rd|th)\s+[Ss]em', title)
+        if m:
+            return m.group(1)
+
+        # Step 7 — Plain digit semester: "6 Semester"
+        m = re.search(r'\b(\d)\s+[Ss]em', title)
         if m:
             return m.group(1)
 
