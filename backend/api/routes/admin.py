@@ -387,7 +387,7 @@ def fix_metadata():
     db = SessionLocal()
     try:
         scraper_instance = VTUScraper.__new__(VTUScraper)
-        circulars = db.execute(text("SELECT id, title FROM circulars")).fetchall()
+        circulars = db.execute(text("SELECT id, title, url FROM circulars")).fetchall()
 
         fixed = 0
         unknown_session_count = 0
@@ -396,6 +396,11 @@ def fix_metadata():
 
         for c in circulars:
             title = c.title or ""
+            # If title is the old generic fallback, try the PDF filename instead
+            if not title or title.lower() in ("vtu timetable", "vtu"):
+                import os as _os
+                filename = _os.path.basename(c.url or "").replace(".pdf", "").replace("-", "_")
+                title = filename or title
             new_scheme = scraper_instance.detect_scheme(title)
             new_sem = scraper_instance.extract_semester_range(title)
             new_session = scraper_instance.extract_exam_session(title)
